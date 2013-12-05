@@ -14,140 +14,159 @@
  * limitations under the License.
  */
 
-extern "C" {
-#include <libotr/proto.h>
-}
-
 #include <znc/Client.h>
 #include <znc/Chan.h>
 #include <znc/Modules.h>
 
+extern "C" {
+#include <libotr/proto.h>
+#include <libotr/message.h>
+#include <libotr/userstate.h>
+#include <libotr/privkey.h>
+#include <libotr/instag.h>
+}
+
+#include <iostream>
+#include <cstring>
+#include <cassert>
+
+/*
+ * TODO:
+ * every user has different instance of the module
+ * does this also work for different networks of one user? - must be but better try it
+ *
+ * protocol id - "prpl-irc" or "IRC" ?
+ *
+ * check if user is admin using CModule::GetUser && CUser::IsAdmin and print a
+ * fat warning if he is not
+ *
+ * call otrl_message_poll periodically
+ *
+ * formatting (80? 100?), consistent naming, brace style
+ */
+
 using std::vector;
+using std::cout;
 
-#if 0
-class CSampleTimer : public CTimer {
-public:
+/* forward, needed by the module */
+OtrlMessageAppOps InitOps();
 
-	CSampleTimer(CModule* pModule, unsigned int uInterval, unsigned int uCycles, const CString& sLabel, const CString& sDescription) : CTimer(pModule, uInterval, uCycles, sLabel, sDescription) {}
-	virtual ~CSampleTimer() {}
+#define PROTOCOL_ID "irc"
 
-private:
-protected:
-	virtual void RunJob() {
-		m_pModule->PutModule("TEST!!!!");
-	}
-};
-#endif
+// helpers
+
+const char* strdup_new(const char *str) {
+	size_t len = strlen(str);
+	char *dup = new char[len + 1];
+	strncpy(dup, str, len)[len] = '\0';
+
+	return dup;
+}
+
+// end helpers
 
 class COtrMod : public CModule {
+public: /* XXX */
+	OtrlUserState m_pUserState = NULL;
+	OtrlMessageAppOps m_xOtrOps; //FIXME: we can init this just once
+	CString *pPrivkeyPath = NULL; //FIXME: can I use a = constructor?
+	CString *pFPPath = NULL;
+	CString *pInsTagPath = NULL;
+
+	void dbg(CString s)
+	{
+		cout << s << "\n";
+	}
+
 public:
 	MODCONSTRUCTOR(COtrMod) {}
 
 	virtual bool OnLoad(const CString& sArgs, CString& sMessage) {
-		PutModule("HI!");
-		//AddTimer(new CSampleTimer(this, 300, 0, "Sample", "Sample timer for sample things."));
-		//AddTimer(new CSampleTimer(this, 5, 20, "Another", "Another sample timer."));
-		//AddTimer(new CSampleTimer(this, 25000, 5, "Third", "A third sample timer."));
 
-                OTRL_INIT; /* FIXME */
+		// Initialize libotr if needed
+		static bool otrInitialized = false;
+		if (!otrInitialized) {
+			OTRL_INIT;
+			otrInitialized = true;
+		}
+
+		// Initialize userstate
+		m_pUserState = otrl_userstate_create();
+
+		pPrivkeyPath = new CString(GetSavePath() + "/otr.key");
+		pFPPath = new CString(GetSavePath() + "/otr.fp");
+		pInsTagPath = new CString(GetSavePath() + "/otr.instag");
+		gcry_error_t err;
+
+		//FIXME: OUTPUT
+		// Load private key
+		err = otrl_privkey_read(m_pUserState, pPrivkeyPath->c_str());
+		if (err == GPG_ERR_NO_ERROR)
+			dbg(CString("Private keys loaded from ") + *pPrivkeyPath + ".");
+		else if (err == gcry_error_from_errno(ENOENT))
+			dbg("No private key found, you need to generate one.");
+		else
+			dbg(CString("Failed to load private key: ") + gcry_strerror(err) + ".");
+
+		// Load fingerprints
+		err = otrl_privkey_read_fingerprints(m_pUserState, pFPPath->c_str(), NULL, NULL);
+		if (err == GPG_ERR_NO_ERROR)
+			dbg(CString("Fingerprints loaded from ") + *pFPPath + ".");
+		else if (err == gcry_error_from_errno(ENOENT))
+			dbg("No fingerprint file found.");
+		else
+			dbg(CString("Failed to load fingerprints: ") + gcry_strerror(err) + ".");
+
+		//  Load instance tags
+		err = otrl_instag_read(m_pUserState, pInsTagPath->c_str());
+		if (err == GPG_ERR_NO_ERROR)
+			dbg("Instance tags loaded from " + *pInsTagPath + ".");
+		else if (err == gcry_error_from_errno(ENOENT))
+			dbg("No instance tag file found.");
+		else
+			dbg(CString("Failed to load instance tags: ") + gcry_strerror(err) + ".");
+
+		m_xOtrOps = InitOps();
 
 		return true;
 	}
 
 	virtual ~COtrMod() {
-		PutModule("I'm being unloaded!");
-	}
-
-	virtual bool OnBoot() {
-		// This is called when the app starts up (only modules that are loaded in the config will get this event)
-		return true;
-	}
-
-	virtual void OnIRCConnected() {
-		PutModule("You got connected BoyOh.");
-	}
-
-	virtual void OnIRCDisconnected() {
-		PutModule("You got disconnected BoyOh.");
-	}
-
-	virtual EModRet OnIRCRegistration(CString& sPass, CString& sNick, CString& sIdent, CString& sRealName) {
-		sRealName += " - ZNC";
-		return CONTINUE;
-	}
-
-	virtual EModRet OnBroadcast(CString& sMessage) {
-		PutModule("------ [" + sMessage + "]");
-		sMessage = "======== [" + sMessage + "] ========";
-		return CONTINUE;
-	}
-
-	virtual void OnRawMode(const CNick& OpNick, CChan& Channel, const CString& sModes, const CString& sArgs) {
-		PutModule("* " + OpNick.GetNick() + " sets mode: " + sModes + " " + sArgs + " (" + Channel.GetName() + ")");
-	}
-
-	virtual EModRet OnRaw(CString& sLine) {
-		// PutModule("OnRaw() [" + sLine + "]");
-		return CONTINUE;
-	}
-
-	virtual EModRet OnUserRaw(CString& sLine) {
-		// PutModule("UserRaw() [" + sLine + "]");
-		return CONTINUE;
-	}
-
-	virtual EModRet OnTimerAutoJoin(CChan& Channel) {
-		PutModule("Attempting to join " + Channel.GetName());
-		return CONTINUE;
-	}
-
-	virtual void OnNick(const CNick& OldNick, const CString& sNewNick, const vector<CChan*>& vChans) {
-		PutModule("* " + OldNick.GetNick() + " is now known as " + sNewNick);
-	}
-
-	virtual EModRet OnUserNotice(CString& sTarget, CString& sMessage) {
-		PutModule("[" + sTarget + "] usernotice [" + sMessage + "]");
-		sMessage = "\037" + sMessage + "\037";
-
-		return CONTINUE;
-	}
-
-	virtual EModRet OnPrivNotice(CNick& Nick, CString& sMessage) {
-		PutModule("[" + Nick.GetNick() + "] privnotice [" + sMessage + "]");
-		sMessage = "\002" + sMessage + "\002";
-
-		return CONTINUE;
+		if (m_pUserState)
+			otrl_userstate_free(m_pUserState);
+		delete pPrivkeyPath;
+		delete pFPPath;
+		delete pInsTagPath;
 	}
 
 	virtual EModRet OnUserMsg(CString& sTarget, CString& sMessage) {
-		PutModule("[" + sTarget + "] usermsg [" + sMessage + "]");
-		sMessage = "Sample: \0034" + sMessage + "\003";
+                /* outgoing messages, both to channels and users */
+                //CString s = CString((long long)(this));
+		//PutModule("[" + sTarget + "] usermsg [" + sMessage + "] " + s);
+		sMessage = "encrypt(" + sMessage + ")";
 
 		return CONTINUE;
 	}
 
 	virtual EModRet OnPrivMsg(CNick& Nick, CString& sMessage) {
-		PutModule("[" + Nick.GetNick() + "] privmsg [" + sMessage + "]");
-		sMessage = "\002" + sMessage + "\002";
+                /* incoming private messages */
+		//PutModule("[" + Nick.GetNick() +  ", " + Nick.GetHost() + "] privmsg [" + sMessage + "]");
+		sMessage = "decrypt(" + sMessage + ")";
 
 		return CONTINUE;
 	}
 
-	virtual EModRet OnChanMsg(CNick& Nick, CChan& Channel, CString& sMessage) {
-		if (sMessage == "!ping") {
-			PutIRC("PRIVMSG " + Channel.GetName() + " :PONG?");
-		}
-
-		sMessage = "x " + sMessage + " x";
-
-		PutModule(sMessage);
-
-		return CONTINUE;
-	}
+	/* OnPrivAction/CTCP? */
 
 	virtual void OnModCommand(const CString& sCommand) {
 		if (sCommand.Equals("TIMERS")) {
 			ListTimers();
+		}
+		else
+		{
+			PutModule(GetModDataDir());
+			PutModule(GetSavePath());
+			PutModule(GetModPath());
 		}
 	}
 
@@ -168,3 +187,203 @@ template<> void TModInfo<COtrMod>(CModInfo& Info) {
 }
 
 USERMODULEDEFS(COtrMod, "FIXME")
+
+// libotr callbacks
+
+OtrlPolicy otrPolicy(void *opdata, ConnContext *context) {
+	return OTRL_POLICY_DEFAULT;
+}
+
+void otrCreatePrivkey(void *opdata, const char *accountname, const char *protocol) {
+	/* TODO REQUIRED */
+}
+
+int otrIsLoggedIn(void *opdata, const char *accountname, const char *protocol, const char *recipient) {
+	// 1 = online, 0 = offline, -1 = not sure
+	return -1;
+}
+
+void otrInjectMessage(void *opdata, const char *accountname, const char *protocol, const char *recipient, const char *message) {
+	/* TODO REQUIRED */
+}
+
+void otrUpdateContextList(void *opdata) {
+	/* do nothing? */
+	COtrMod *mod = static_cast<COtrMod*>(opdata);
+	assert(mod);
+	mod->PutModule("Not implemented: otrUpdateContextList");
+}
+
+void otrNewFingerprint(void *opdata, OtrlUserState us, const char *accountname, const char *protocol, const char *username, unsigned char fingerprint[20]) {
+	/* TODO */
+	COtrMod *mod = static_cast<COtrMod*>(opdata);
+	assert(mod);
+	mod->PutModule("Not implemented: otrNewFingerprint");
+}
+
+void otrWriteFingerprints(void *opdata)
+{
+	/* TODO: write fingerprints to disk */
+	COtrMod *mod = static_cast<COtrMod*>(opdata);
+	assert(mod);
+	mod->PutModule("Not implemented: otrWriteFingerprints");
+}
+
+void otrGoneSecure(void *opdata, ConnContext *context) {
+	/* TODO */
+	COtrMod *mod = static_cast<COtrMod*>(opdata);
+	assert(mod);
+	mod->PutModule("Not implemented: otrGoneSecure");
+}
+
+void otrGoneInsecure(void *opdata, ConnContext *context) {
+	/* TODO */
+	COtrMod *mod = static_cast<COtrMod*>(opdata);
+	assert(mod);
+	mod->PutModule("Not implemented: otrGoneInsecure");
+}
+
+void otrStillSecure(void *opdata, ConnContext *context, int is_reply) {
+	/* TODO */
+	COtrMod *mod = static_cast<COtrMod*>(opdata);
+	assert(mod);
+	mod->PutModule("Not implemented: otrStillSecure");
+}
+
+int otrMaxMessageSize(void *opdata, ConnContext *context) {
+	return 400; /* TODO */
+}
+
+const char* otrAccountName(void *opdata, const char *account, const char *protocol) {
+	/* TODO */
+	return strdup_new(account);
+}
+
+void otrFreeString(void *opdata, const char *str) {
+	delete[] str;
+}
+
+void otrReceiveSymkey(void *opdata, ConnContext *context, unsigned int use, const unsigned char *usedata, size_t usedatalen, const unsigned char *symkey) {
+	/* We don't have any use for a symmetric key. */
+	return;
+}
+
+const char* otrErrorMessage(void *opdata, ConnContext *context, OtrlErrorCode err_code) {
+	/* TODO: improve the explanations */
+	switch (err_code){
+	case OTRL_ERRCODE_ENCRYPTION_ERROR:
+		return strdup_new("Error encrypting message.");
+	case OTRL_ERRCODE_MSG_NOT_IN_PRIVATE:
+		return strdup_new("Sent an encrypted message to somebody who is not in OTR session.");
+	case OTRL_ERRCODE_MSG_UNREADABLE:
+		return strdup_new("Sent an unreadable encrypted message.");
+	case OTRL_ERRCODE_MSG_MALFORMED:
+		return strdup_new("Malformed message sent.");
+	default:
+		return strdup_new("Unknown error.");
+	}
+}
+
+void otrHandleSMPEvent(void *opdata, OtrlSMPEvent smp_event, ConnContext *context, unsigned short progress_percent, char *question) {
+	/* TODO: replace assert with something sensible. */
+	COtrMod *mod = static_cast<COtrMod*>(opdata);
+	assert(mod);
+	mod->PutModule("Not implemented: otrHandleSMPEvent");
+}
+
+void otrHandleMsgEvent(void *opdata, OtrlMessageEvent msg_event, ConnContext *context, const char *message, gcry_error_t err) {
+	COtrMod *mod = static_cast<COtrMod*>(opdata);
+	assert(mod);
+
+	switch (msg_event) {
+	case OTRL_MSGEVENT_ENCRYPTION_REQUIRED:
+		mod->PutModule("Our policy requires encryption but we are trying to send an unencrypted message out.");
+		break;
+	case OTRL_MSGEVENT_ENCRYPTION_ERROR:
+		mod->PutModule("An error occured while encrypting a message and the message was not sent.");
+		break;
+	case OTRL_MSGEVENT_CONNECTION_ENDED:
+		mod->PutModule("Message has not been sent because our buddy has ended the private conversation. We should either close the connection, or refresh it.");
+		break;
+	case OTRL_MSGEVENT_SETUP_ERROR:
+		mod->PutModule("A private conversation could not be set up."); //TODO: A gcry_error_t will be passed.
+	case OTRL_MSGEVENT_MSG_REFLECTED:
+		mod->PutModule("Received our own OTR messages.");
+		break;
+	case OTRL_MSGEVENT_MSG_RESENT:
+		mod->PutModule("The previous message was resent.");
+		break;
+	case OTRL_MSGEVENT_RCVDMSG_NOT_IN_PRIVATE:
+		mod->PutModule("Received an encrypted message but cannot read it because no private connection is established yet.");
+		break;
+	case OTRL_MSGEVENT_RCVDMSG_UNREADABLE:
+		mod->PutModule("Cannot read the received message.");
+		break;
+	case OTRL_MSGEVENT_RCVDMSG_MALFORMED:
+		mod->PutModule("The message received contains malformed data.");
+		break;
+	case OTRL_MSGEVENT_LOG_HEARTBEAT_RCVD:
+		mod->PutModule("Received a heartbeat.");
+		break;
+	case OTRL_MSGEVENT_LOG_HEARTBEAT_SENT:
+		mod->PutModule("Sent a heartbeat.");
+		break;
+	case OTRL_MSGEVENT_RCVDMSG_GENERAL_ERR:
+		mod->PutModule("Received a general OTR error."); //TODO: The argument 'message' will also be passed and it will contain the OTR error message.
+		break;
+	case OTRL_MSGEVENT_RCVDMSG_UNENCRYPTED:
+		mod->PutModule("Received an unencrypted message."); //TODO: The argument 'smessage' will also be passed and it will contain the plaintext message.
+		break;
+	case OTRL_MSGEVENT_RCVDMSG_UNRECOGNIZED:
+		mod->PutModule("Cannot recognize the type of OTR message received.");
+		break;
+	case OTRL_MSGEVENT_RCVDMSG_FOR_OTHER_INSTANCE:
+		mod->PutModule("Received and discarded a message intended for another instance.");
+		break;
+	default:
+		mod->PutModule("Unknown message event.");
+		break;
+	}
+}
+
+void otrCreateInsTag(void *opdata, const char *accountname, const char *protocol) {
+	COtrMod *mod = static_cast<COtrMod*>(opdata);
+	assert(mod);
+
+	OtrlUserState us = mod->m_pUserState;
+	assert(us);
+
+	otrl_instag_generate(us, mod->pInsTagPath->c_str(), accountname, protocol);
+}
+
+// end of callbacks
+
+OtrlMessageAppOps InitOps() {
+	return (OtrlMessageAppOps){
+		/* policy */		otrPolicy,
+		/* create_privkey */	otrCreatePrivkey,
+		/* is_logged_in */	otrIsLoggedIn,
+		/* inject_message */	otrInjectMessage,
+		/* update_context_list */ otrUpdateContextList,
+		/* new_fingerprint */	otrNewFingerprint,
+		/* write_fingerprints */ otrWriteFingerprints,
+		/* gone_secure */	otrGoneSecure,
+		/* gone_insecure */	otrGoneInsecure,
+		/* still_secure */	otrStillSecure,
+		/* max_message_size */	otrMaxMessageSize,
+		/* account_name */	otrAccountName,
+		/* account_name_free */	otrFreeString,
+		/* received_symkey */	otrReceiveSymkey,
+		/* otr_error_message */	otrErrorMessage,
+		/* otr_error_message_free */ otrFreeString,
+		/* resent_msg_prefix */	NULL, /* uses [resent] by default */
+		/* resent_msg_prefix_free */ NULL,
+		/* handle_smp_event */	otrHandleSMPEvent,
+		/* handle_msg_event */	otrHandleMsgEvent,
+		/* create_instag */	otrCreateInsTag,
+		/* convert_msg */	NULL, /* no conversion */
+		/* convert_free */	NULL,
+		/* timer_control */	NULL /* we'll handle the timer ourselves */
+	};
+}
+
