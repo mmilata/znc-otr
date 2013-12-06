@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+#include <znc/IRCNetwork.h>
 #include <znc/Client.h>
 #include <znc/Chan.h>
 #include <znc/Modules.h>
@@ -32,8 +33,10 @@ extern "C" {
 
 /*
  * TODO:
+ *
  * every user has different instance of the module
  * does this also work for different networks of one user? - must be but better try it
+ * ... but the keys/fps/instags are shared among networks, no?
  *
  * protocol id - "prpl-irc" or "IRC" ?
  *
@@ -42,7 +45,13 @@ extern "C" {
  *
  * call otrl_message_poll periodically
  *
+ * module callbacks may be invoked even if no client is attached - we probably
+ * should save the module messages and replay them later
+ *
  * formatting (80? 100?), consistent naming, brace style
+ *
+ * logging - can we detect if it's turned on? can we turn it off? what is
+ * logged on the bouncer, plain/ciphertext?
  */
 
 using std::vector;
@@ -70,7 +79,7 @@ public: /* XXX */
 	OtrlUserState m_pUserState = NULL;
 	OtrlMessageAppOps m_xOtrOps; //FIXME: we can init this just once
 	CString *pPrivkeyPath = NULL; //FIXME: can I use a = constructor?
-	CString *pFPPath = NULL;
+	CString *pFPPath = NULL; //FIXME: m_
 	CString *pInsTagPath = NULL;
 
 	void dbg(CString s)
@@ -140,20 +149,63 @@ public:
 	}
 
 	virtual EModRet OnUserMsg(CString& sTarget, CString& sMessage) {
-                /* outgoing messages, both to channels and users */
-                //CString s = CString((long long)(this));
-		//PutModule("[" + sTarget + "] usermsg [" + sMessage + "] " + s);
-		sMessage = "encrypt(" + sMessage + ")";
+		PutModule("OnUserMsg " + sTarget + ": " + sMessage);
 
-		return CONTINUE;
+		return CONTINUE; //XXX
+#if 0
+		// Do not pass the message to libotr if sTarget is a channel
+		CIRCNetwork *network = GetNetwork();
+		assert(network);
+
+		bool bTargetIsChan;;
+		if (sTarget.empty()) {
+			bTargetIsChan = true;
+		} else if (network->GetChanPrefixes().empty()) {
+			// RFC 2811
+			bTargetIsChan = (CString("&#!+").find(sTarget[0]) != CString::npos);
+		} else {
+			bTargetIsChan = (network->GetChanPrefixes().find(sTarget[0]) != CString::npos);
+		}
+
+		if (bTargetIsChan) {
+			PutModule("Target is channel, not encrypting");
+			return CONTINUE;
+		}
+
+		gcry_error_t err;
+		char *newmessage = NULL;
+		err = otrl_message_sending(m_pUserState, &m_xOtrOps, this, "FIXME", PROTOCOL_ID, sTarget.c_str(), OTRL_INSTAG_BEST /*FIXME*/, sMessage.c_str(), NULL, &newmessage, OTRL_FRAGMENT_SEND_ALL, NULL, NULL, NULL);
+
+		if (err) {
+			PutModule(CString("otrl_message_sending failed: ") + gcry_strerror(err));
+		}
+
+		return HALT;
+#endif
 	}
 
 	virtual EModRet OnPrivMsg(CNick& Nick, CString& sMessage) {
                 /* incoming private messages */
 		//PutModule("[" + Nick.GetNick() +  ", " + Nick.GetHost() + "] privmsg [" + sMessage + "]");
-		sMessage = "decrypt(" + sMessage + ")";
 
-		return CONTINUE;
+		int res;
+		char *newmessage = NULL;
+		res = otrl_message_receiving(m_pUserState, &m_xOtrOps, this, "FIXME"/*should not really matter?*/, PROTOCOL_ID, Nick.GetNick().c_str() /* @server? */, sMessage.c_str(), &newmessage, NULL, NULL, NULL, NULL);
+
+		if (res == 1) {
+			PutModule("Received internal OTR message");
+			return HALT;
+		} else if (res != 0) {
+			PutModule(CString("otrl_message_receiving: unknown return code ") + CString(res));
+			return HALT;
+		} else if (newmessage == NULL) {
+			return CONTINUE;
+		} else {
+			// FIXME: aren't we leaking the memory of original sMessage?
+			sMessage = CString(newmessage);
+			otrl_message_free(newmessage);
+			return CONTINUE;
+		}
 	}
 
 	/* OnPrivAction/CTCP? */
@@ -195,7 +247,21 @@ OtrlPolicy otrPolicy(void *opdata, ConnContext *context) {
 }
 
 void otrCreatePrivkey(void *opdata, const char *accountname, const char *protocol) {
-	/* TODO REQUIRED */
+	/* TODO: key generation needs to happen in background thread */
+	COtrMod *mod = static_cast<COtrMod*>(opdata);
+	assert(mod);
+	assert(0 == strcmp(protocol, PROTOCOL_ID));
+	assert(mod->m_pUserState);
+	assert(mod->pPrivkeyPath);
+
+	mod->PutModule("otrCreatePrivkey: this will take a shitload of time, freezing ZNC.");
+	gcry_error_t err;
+	err = otrl_privkey_generate(mod->m_pUserState, mod->pPrivkeyPath->c_str(), accountname, protocol);
+
+	if (err) {
+		mod->PutModule(CString("otrCreatePrivkey: error: ") + gcry_strerror(err) + ".");
+	} else
+		mod->PutModule("otrCreatePrivkey: done.");
 }
 
 int otrIsLoggedIn(void *opdata, const char *accountname, const char *protocol, const char *recipient) {
@@ -204,7 +270,17 @@ int otrIsLoggedIn(void *opdata, const char *accountname, const char *protocol, c
 }
 
 void otrInjectMessage(void *opdata, const char *accountname, const char *protocol, const char *recipient, const char *message) {
-	/* TODO REQUIRED */
+	COtrMod *mod = static_cast<COtrMod*>(opdata);
+	assert(mod);
+	assert(0 == strcmp(protocol, PROTOCOL_ID));
+
+	mod->PutModule("otrInjectMessage:");
+	mod->PutModule(accountname);
+	mod->PutModule(recipient);
+	mod->PutModule(message);
+
+	//TODO: is there a better way to send the message?
+	mod->PutIRC(CString("PRIVMSG ") + recipient + " :" + message);
 }
 
 void otrUpdateContextList(void *opdata) {
