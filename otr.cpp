@@ -151,8 +151,6 @@ public:
 	virtual EModRet OnUserMsg(CString& sTarget, CString& sMessage) {
 		PutModule("OnUserMsg " + sTarget + ": " + sMessage);
 
-		return CONTINUE; //XXX
-#if 0
 		// Do not pass the message to libotr if sTarget is a channel
 		CIRCNetwork *network = GetNetwork();
 		assert(network);
@@ -174,14 +172,25 @@ public:
 
 		gcry_error_t err;
 		char *newmessage = NULL;
-		err = otrl_message_sending(m_pUserState, &m_xOtrOps, this, "FIXME", PROTOCOL_ID, sTarget.c_str(), OTRL_INSTAG_BEST /*FIXME*/, sMessage.c_str(), NULL, &newmessage, OTRL_FRAGMENT_SEND_ALL, NULL, NULL, NULL);
+
+		/* XXX: Due to a bug in libotr-4.0.0, we cannot pass
+		 * OTRL_FRAGMENT_SEND_ALL (fixed in d748757). For now, we send
+		 * the message ourselves, without fragmentation.
+		 */
+		err = otrl_message_sending(m_pUserState, &m_xOtrOps, this, "FIXME", PROTOCOL_ID, sTarget.c_str(), OTRL_INSTAG_BEST /*FIXME*/, sMessage.c_str(), NULL, &newmessage, OTRL_FRAGMENT_SEND_SKIP, NULL, NULL, NULL);
 
 		if (err) {
 			PutModule(CString("otrl_message_sending failed: ") + gcry_strerror(err));
+			return HALT;
 		}
 
-		return HALT;
-#endif
+		assert(newmessage);
+		// FIXME: aren't we leaking the memory of original sMessage?
+		sMessage = CString(newmessage);
+		PutModule("Sending '" + sMessage + "'");
+		otrl_message_free(newmessage);
+
+		return CONTINUE;
 	}
 
 	virtual EModRet OnPrivMsg(CNick& Nick, CString& sMessage) {
@@ -199,9 +208,11 @@ public:
 			PutModule(CString("otrl_message_receiving: unknown return code ") + CString(res));
 			return HALT;
 		} else if (newmessage == NULL) {
+			PutModule("Received non-encrypted privmsg");
 			return CONTINUE;
 		} else {
 			// FIXME: aren't we leaking the memory of original sMessage?
+			PutModule("Received encrypted privmsg");
 			sMessage = CString(newmessage);
 			otrl_message_free(newmessage);
 			return CONTINUE;
