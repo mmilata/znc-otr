@@ -394,6 +394,7 @@ void otrHandleMsgEvent(void *opdata, OtrlMessageEvent msg_event, ConnContext *co
 		break;
 	case OTRL_MSGEVENT_SETUP_ERROR:
 		mod->PutModule("A private conversation could not be set up."); //TODO: A gcry_error_t will be passed.
+		break;
 	case OTRL_MSGEVENT_MSG_REFLECTED:
 		mod->PutModule("Received our own OTR messages.");
 		break;
