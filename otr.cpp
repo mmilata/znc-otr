@@ -52,6 +52,8 @@ extern "C" {
  *
  * logging - can we detect if it's turned on? can we turn it off? what is
  * logged on the bouncer, plain/ciphertext?
+ *
+ * encrypt outgoing ACTIONs
  */
 
 using std::vector;
@@ -150,8 +152,6 @@ public:
 	}
 
 	virtual EModRet OnUserMsg(CString& sTarget, CString& sMessage) {
-		PutModule("OnUserMsg " + sTarget + ": " + sMessage);
-
 		// Do not pass the message to libotr if sTarget is a channel
 		CIRCNetwork *network = GetNetwork();
 		assert(network);
@@ -210,45 +210,32 @@ public:
 				sMessage.c_str(), &newmessage, NULL, NULL, NULL, NULL);
 
 		if (res == 1) {
-			PutModule("Received internal OTR message");
+			//PutModule("Received internal OTR message");
 			return HALT;
 		} else if (res != 0) {
 			PutModule(CString("otrl_message_receiving: unknown return code ")
 					+ CString(res));
 			return HALT;
 		} else if (newmessage == NULL) {
-			PutModule("Received non-encrypted privmsg");
+			//PutModule("Received non-encrypted privmsg");
 			return CONTINUE;
 		} else {
 			// FIXME: aren't we leaking the memory of original sMessage?
-			PutModule("Received encrypted privmsg");
+			//PutModule("Received encrypted privmsg");
 			sMessage = CString(newmessage);
 			otrl_message_free(newmessage);
 			return CONTINUE;
 		}
 	}
 
-	/* OnPrivAction/CTCP? */
-
 	virtual void OnModCommand(const CString& sCommand) {
-		if (sCommand.Equals("TIMERS")) {
-			ListTimers();
-		}
-		else
-		{
-			PutModule(GetModDataDir());
-			PutModule(GetSavePath());
-			PutModule(GetModPath());
-		}
+		// No commands yet
 	}
 
-	virtual EModRet OnStatusCommand(CString& sCommand) {
-		if (sCommand.Equals("SAMPLE")) {
-			PutModule("Hi, I'm your friendly sample module.");
-			return HALT;
-		}
-
-		return CONTINUE;
+	bool PutModuleContext(ConnContext *ctx, const CString& sLine) {
+		assert(ctx);
+		assert(ctx->username);
+		return PutModule(CString("[") + ctx->username + "] " + sLine);
 	}
 };
 
@@ -258,7 +245,7 @@ template<> void TModInfo<COtrMod>(CModInfo& Info) {
 	//Info.SetArgsHelpText("No args.");
 }
 
-USERMODULEDEFS(COtrMod, "FIXME")
+USERMODULEDEFS(COtrMod, "Off-the-Record (OTR) encryption for private messages")
 
 // libotr callbacks
 
@@ -297,11 +284,6 @@ void otrInjectMessage(void *opdata, const char *accountname, const char *protoco
 	assert(mod);
 	assert(0 == strcmp(protocol, PROTOCOL_ID));
 
-	mod->PutModule("otrInjectMessage:");
-	mod->PutModule(accountname);
-	mod->PutModule(recipient);
-	mod->PutModule(message);
-
 	//TODO: is there a better way to send the message?
 	mod->PutIRC(CString("PRIVMSG ") + recipient + " :" + message);
 }
@@ -330,24 +312,21 @@ void otrWriteFingerprints(void *opdata)
 }
 
 void otrGoneSecure(void *opdata, ConnContext *context) {
-	/* TODO */
 	COtrMod *mod = static_cast<COtrMod*>(opdata);
 	assert(mod);
-	mod->PutModule("Not implemented: otrGoneSecure");
+	mod->PutModuleContext(context, "Gone SECURE");
 }
 
 void otrGoneInsecure(void *opdata, ConnContext *context) {
-	/* TODO */
 	COtrMod *mod = static_cast<COtrMod*>(opdata);
 	assert(mod);
-	mod->PutModule("Not implemented: otrGoneInsecure");
+	mod->PutModuleContext(context, "Gone INSECURE");
 }
 
 void otrStillSecure(void *opdata, ConnContext *context, int is_reply) {
-	/* TODO */
 	COtrMod *mod = static_cast<COtrMod*>(opdata);
 	assert(mod);
-	mod->PutModule("Not implemented: otrStillSecure");
+	mod->PutModuleContext(context, "Still SECURE");
 }
 
 int otrMaxMessageSize(void *opdata, ConnContext *context) {
@@ -399,60 +378,63 @@ void otrHandleMsgEvent(void *opdata, OtrlMessageEvent msg_event, ConnContext *co
 
 	switch (msg_event) {
 	case OTRL_MSGEVENT_ENCRYPTION_REQUIRED:
-		mod->PutModule("Our policy requires encryption but we are trying to send "
-				"an unencrypted message out.");
+		mod->PutModuleContext(context, "Our policy requires encryption but we are trying "
+				"to send an unencrypted message out.");
 		break;
 	case OTRL_MSGEVENT_ENCRYPTION_ERROR:
-		mod->PutModule("An error occured while encrypting a message and the message "
-				"was not sent.");
+		mod->PutModuleContext(context, "An error occured while encrypting a message and "
+				"the message was not sent.");
 		break;
 	case OTRL_MSGEVENT_CONNECTION_ENDED:
-		mod->PutModule("Message has not been sent because our buddy has ended the "
-				"private conversation. We should either close the connection, "
-				"or refresh it.");
+		mod->PutModuleContext(context, "Message has not been sent because our buddy has "
+				"ended the private conversation. We should either close the "
+				"connection, or refresh it.");
 		break;
 	case OTRL_MSGEVENT_SETUP_ERROR:
-		//TODO: A gcry_error_t will be passed.
-		mod->PutModule("A private conversation could not be set up.");
+		mod->PutModuleContext(context,
+				CString("A private conversation could not be set up: ") +
+				gcry_strerror(err));
 		break;
 	case OTRL_MSGEVENT_MSG_REFLECTED:
-		mod->PutModule("Received our own OTR messages.");
+		mod->PutModuleContext(context, "Received our own OTR messages.");
 		break;
 	case OTRL_MSGEVENT_MSG_RESENT:
-		mod->PutModule("The previous message was resent.");
+		mod->PutModuleContext(context, "The previous message was resent.");
 		break;
 	case OTRL_MSGEVENT_RCVDMSG_NOT_IN_PRIVATE:
-		mod->PutModule("Received an encrypted message but cannot read it because "
-				"no private connection is established yet.");
+		mod->PutModuleContext(context, "Received an encrypted message but cannot read it "
+				"because no private connection is established yet.");
 		break;
 	case OTRL_MSGEVENT_RCVDMSG_UNREADABLE:
-		mod->PutModule("Cannot read the received message.");
+		mod->PutModuleContext(context, "Cannot read the received message.");
 		break;
 	case OTRL_MSGEVENT_RCVDMSG_MALFORMED:
-		mod->PutModule("The message received contains malformed data.");
+		mod->PutModuleContext(context, "The message received contains malformed data.");
 		break;
 	case OTRL_MSGEVENT_LOG_HEARTBEAT_RCVD:
-		mod->PutModule("Received a heartbeat.");
+		mod->PutModuleContext(context, "Received a heartbeat.");
 		break;
 	case OTRL_MSGEVENT_LOG_HEARTBEAT_SENT:
-		mod->PutModule("Sent a heartbeat.");
+		mod->PutModuleContext(context, "Sent a heartbeat.");
 		break;
 	case OTRL_MSGEVENT_RCVDMSG_GENERAL_ERR:
-		//TODO: The argument 'message' will also be passed and it will contain the OTR error message.
-		mod->PutModule("Received a general OTR error.");
+		mod->PutModuleContext(context, CString("Received a general OTR error: ") + message);
 		break;
 	case OTRL_MSGEVENT_RCVDMSG_UNENCRYPTED:
-		//TODO: The argument 'smessage' will also be passed and it will contain the plaintext message.
-		mod->PutModule("Received an unencrypted message.");
+		//TODO: send the message to the client
+		mod->PutModuleContext(context, CString("Received an unencrypted message: ") +
+				message);
 		break;
 	case OTRL_MSGEVENT_RCVDMSG_UNRECOGNIZED:
-		mod->PutModule("Cannot recognize the type of OTR message received.");
+		mod->PutModuleContext(context, "Cannot recognize the type of OTR message "
+				"received.");
 		break;
 	case OTRL_MSGEVENT_RCVDMSG_FOR_OTHER_INSTANCE:
-		mod->PutModule("Received and discarded a message intended for another instance.");
+		mod->PutModuleContext(context, "Received and discarded a message intended for "
+				"another instance.");
 		break;
 	default:
-		mod->PutModule("Unknown message event.");
+		mod->PutModuleContext(context, "Unknown message event.");
 		break;
 	}
 }
