@@ -38,8 +38,6 @@ extern "C" {
  * does this also work for different networks of one user? - must be but better try it
  * ... but the keys/fps/instags are shared among networks, no?
  *
- * protocol id - "prpl-irc" or "IRC" ?
- *
  * check if user is admin using CModule::GetUser && CUser::IsAdmin and print a
  * fat warning if he is not
  *
@@ -48,7 +46,7 @@ extern "C" {
  * module callbacks may be invoked even if no client is attached - we probably
  * should save the module messages and replay them later
  *
- * formatting (80? 100?), consistent naming, brace style
+ * consistent naming, brace style
  *
  * logging - can we detect if it's turned on? can we turn it off? what is
  * logged on the bouncer, plain/ciphertext?
@@ -60,6 +58,7 @@ using std::cout;
 /* forward, needed by the module */
 OtrlMessageAppOps InitOps();
 
+//TODO: "prpl-irc"? "IRC"?
 #define PROTOCOL_ID "irc"
 
 // helpers
@@ -162,7 +161,8 @@ public:
 			// RFC 2811
 			bTargetIsChan = (CString("&#!+").find(sTarget[0]) != CString::npos);
 		} else {
-			bTargetIsChan = (network->GetChanPrefixes().find(sTarget[0]) != CString::npos);
+			bTargetIsChan =
+				(network->GetChanPrefixes().find(sTarget[0]) != CString::npos);
 		}
 
 		if (bTargetIsChan) {
@@ -177,7 +177,9 @@ public:
 		 * OTRL_FRAGMENT_SEND_ALL (fixed in d748757). For now, we send
 		 * the message ourselves, without fragmentation.
 		 */
-		err = otrl_message_sending(m_pUserState, &m_xOtrOps, this, "FIXME", PROTOCOL_ID, sTarget.c_str(), OTRL_INSTAG_BEST /*FIXME*/, sMessage.c_str(), NULL, &newmessage, OTRL_FRAGMENT_SEND_SKIP, NULL, NULL, NULL);
+		err = otrl_message_sending(m_pUserState, &m_xOtrOps, this, "FIXME", PROTOCOL_ID,
+				sTarget.c_str(), OTRL_INSTAG_BEST /*FIXME*/, sMessage.c_str(),
+				NULL, &newmessage, OTRL_FRAGMENT_SEND_SKIP, NULL, NULL, NULL);
 
 		if (err) {
 			PutModule(CString("otrl_message_sending failed: ") + gcry_strerror(err));
@@ -187,25 +189,25 @@ public:
 		assert(newmessage);
 		// FIXME: aren't we leaking the memory of original sMessage?
 		sMessage = CString(newmessage);
-		PutModule("Sending '" + sMessage + "'");
+		//PutModule("Sending '" + sMessage + "'");
 		otrl_message_free(newmessage);
 
 		return CONTINUE;
 	}
 
 	virtual EModRet OnPrivMsg(CNick& Nick, CString& sMessage) {
-                /* incoming private messages */
-		//PutModule("[" + Nick.GetNick() +  ", " + Nick.GetHost() + "] privmsg [" + sMessage + "]");
-
 		int res;
 		char *newmessage = NULL;
-		res = otrl_message_receiving(m_pUserState, &m_xOtrOps, this, "FIXME"/*should not really matter?*/, PROTOCOL_ID, Nick.GetNick().c_str() /* @server? */, sMessage.c_str(), &newmessage, NULL, NULL, NULL, NULL);
+		res = otrl_message_receiving(m_pUserState, &m_xOtrOps, this, "FIXME"/*should not really matter?*/,
+				PROTOCOL_ID, Nick.GetNick().c_str() /* @server? */,
+				sMessage.c_str(), &newmessage, NULL, NULL, NULL, NULL);
 
 		if (res == 1) {
 			PutModule("Received internal OTR message");
 			return HALT;
 		} else if (res != 0) {
-			PutModule(CString("otrl_message_receiving: unknown return code ") + CString(res));
+			PutModule(CString("otrl_message_receiving: unknown return code ")
+					+ CString(res));
 			return HALT;
 		} else if (newmessage == NULL) {
 			PutModule("Received non-encrypted privmsg");
@@ -245,8 +247,8 @@ public:
 
 template<> void TModInfo<COtrMod>(CModInfo& Info) {
 	Info.SetWikiPage("otr");
-	Info.SetHasArgs(true); //FIXME
-	Info.SetArgsHelpText("FIXME");
+	Info.SetHasArgs(false);
+	//Info.SetArgsHelpText("No args.");
 }
 
 USERMODULEDEFS(COtrMod, "FIXME")
@@ -267,7 +269,8 @@ void otrCreatePrivkey(void *opdata, const char *accountname, const char *protoco
 
 	mod->PutModule("otrCreatePrivkey: this will take a shitload of time, freezing ZNC.");
 	gcry_error_t err;
-	err = otrl_privkey_generate(mod->m_pUserState, mod->pPrivkeyPath->c_str(), accountname, protocol);
+	err = otrl_privkey_generate(mod->m_pUserState, mod->pPrivkeyPath->c_str(), accountname,
+			protocol);
 
 	if (err) {
 		mod->PutModule(CString("otrCreatePrivkey: error: ") + gcry_strerror(err) + ".");
@@ -275,12 +278,14 @@ void otrCreatePrivkey(void *opdata, const char *accountname, const char *protoco
 		mod->PutModule("otrCreatePrivkey: done.");
 }
 
-int otrIsLoggedIn(void *opdata, const char *accountname, const char *protocol, const char *recipient) {
+int otrIsLoggedIn(void *opdata, const char *accountname, const char *protocol,
+		const char *recipient) {
 	// 1 = online, 0 = offline, -1 = not sure
 	return -1;
 }
 
-void otrInjectMessage(void *opdata, const char *accountname, const char *protocol, const char *recipient, const char *message) {
+void otrInjectMessage(void *opdata, const char *accountname, const char *protocol,
+		const char *recipient, const char *message) {
 	COtrMod *mod = static_cast<COtrMod*>(opdata);
 	assert(mod);
 	assert(0 == strcmp(protocol, PROTOCOL_ID));
@@ -301,7 +306,8 @@ void otrUpdateContextList(void *opdata) {
 	mod->PutModule("Not implemented: otrUpdateContextList");
 }
 
-void otrNewFingerprint(void *opdata, OtrlUserState us, const char *accountname, const char *protocol, const char *username, unsigned char fingerprint[20]) {
+void otrNewFingerprint(void *opdata, OtrlUserState us, const char *accountname,
+		const char *protocol, const char *username, unsigned char fingerprint[20]) {
 	/* TODO */
 	COtrMod *mod = static_cast<COtrMod*>(opdata);
 	assert(mod);
@@ -350,7 +356,8 @@ void otrFreeString(void *opdata, const char *str) {
 	delete[] str;
 }
 
-void otrReceiveSymkey(void *opdata, ConnContext *context, unsigned int use, const unsigned char *usedata, size_t usedatalen, const unsigned char *symkey) {
+void otrReceiveSymkey(void *opdata, ConnContext *context, unsigned int use,
+		const unsigned char *usedata, size_t usedatalen, const unsigned char *symkey) {
 	/* We don't have any use for a symmetric key. */
 	return;
 }
@@ -371,29 +378,35 @@ const char* otrErrorMessage(void *opdata, ConnContext *context, OtrlErrorCode er
 	}
 }
 
-void otrHandleSMPEvent(void *opdata, OtrlSMPEvent smp_event, ConnContext *context, unsigned short progress_percent, char *question) {
-	/* TODO: replace assert with something sensible. */
+void otrHandleSMPEvent(void *opdata, OtrlSMPEvent smp_event, ConnContext *context,
+		unsigned short progress_percent, char *question) {
 	COtrMod *mod = static_cast<COtrMod*>(opdata);
 	assert(mod);
 	mod->PutModule("Not implemented: otrHandleSMPEvent");
 }
 
-void otrHandleMsgEvent(void *opdata, OtrlMessageEvent msg_event, ConnContext *context, const char *message, gcry_error_t err) {
+void otrHandleMsgEvent(void *opdata, OtrlMessageEvent msg_event, ConnContext *context,
+		const char *message, gcry_error_t err) {
 	COtrMod *mod = static_cast<COtrMod*>(opdata);
 	assert(mod);
 
 	switch (msg_event) {
 	case OTRL_MSGEVENT_ENCRYPTION_REQUIRED:
-		mod->PutModule("Our policy requires encryption but we are trying to send an unencrypted message out.");
+		mod->PutModule("Our policy requires encryption but we are trying to send "
+				"an unencrypted message out.");
 		break;
 	case OTRL_MSGEVENT_ENCRYPTION_ERROR:
-		mod->PutModule("An error occured while encrypting a message and the message was not sent.");
+		mod->PutModule("An error occured while encrypting a message and the message "
+				"was not sent.");
 		break;
 	case OTRL_MSGEVENT_CONNECTION_ENDED:
-		mod->PutModule("Message has not been sent because our buddy has ended the private conversation. We should either close the connection, or refresh it.");
+		mod->PutModule("Message has not been sent because our buddy has ended the "
+				"private conversation. We should either close the connection, "
+				"or refresh it.");
 		break;
 	case OTRL_MSGEVENT_SETUP_ERROR:
-		mod->PutModule("A private conversation could not be set up."); //TODO: A gcry_error_t will be passed.
+		//TODO: A gcry_error_t will be passed.
+		mod->PutModule("A private conversation could not be set up.");
 		break;
 	case OTRL_MSGEVENT_MSG_REFLECTED:
 		mod->PutModule("Received our own OTR messages.");
@@ -402,7 +415,8 @@ void otrHandleMsgEvent(void *opdata, OtrlMessageEvent msg_event, ConnContext *co
 		mod->PutModule("The previous message was resent.");
 		break;
 	case OTRL_MSGEVENT_RCVDMSG_NOT_IN_PRIVATE:
-		mod->PutModule("Received an encrypted message but cannot read it because no private connection is established yet.");
+		mod->PutModule("Received an encrypted message but cannot read it because "
+				"no private connection is established yet.");
 		break;
 	case OTRL_MSGEVENT_RCVDMSG_UNREADABLE:
 		mod->PutModule("Cannot read the received message.");
@@ -417,10 +431,12 @@ void otrHandleMsgEvent(void *opdata, OtrlMessageEvent msg_event, ConnContext *co
 		mod->PutModule("Sent a heartbeat.");
 		break;
 	case OTRL_MSGEVENT_RCVDMSG_GENERAL_ERR:
-		mod->PutModule("Received a general OTR error."); //TODO: The argument 'message' will also be passed and it will contain the OTR error message.
+		//TODO: The argument 'message' will also be passed and it will contain the OTR error message.
+		mod->PutModule("Received a general OTR error.");
 		break;
 	case OTRL_MSGEVENT_RCVDMSG_UNENCRYPTED:
-		mod->PutModule("Received an unencrypted message."); //TODO: The argument 'smessage' will also be passed and it will contain the plaintext message.
+		//TODO: The argument 'smessage' will also be passed and it will contain the plaintext message.
+		mod->PutModule("Received an unencrypted message.");
 		break;
 	case OTRL_MSGEVENT_RCVDMSG_UNRECOGNIZED:
 		mod->PutModule("Cannot recognize the type of OTR message received.");
