@@ -43,8 +43,6 @@ extern "C" {
  * check if user is admin using CModule::GetUser && CUser::IsAdmin and print a
  * fat warning if he is not
  *
- * call otrl_message_poll periodically
- *
  * module callbacks may be invoked even if no client is attached - we probably
  * should save the module messages and replay them later
  *
@@ -76,6 +74,15 @@ const char* strdup_new(const char *str) {
 }
 
 // end helpers
+
+class COtrTimer : public CTimer {
+public:
+	COtrTimer(CModule* pModule, unsigned int uInterval)
+		: CTimer(pModule, uInterval, /*run forever*/ 0, "OtrTimer", "OTR message poll") {}
+	virtual ~COtrTimer() {}
+protected:
+	virtual void RunJob();
+};
 
 class COtrMod : public CModule {
 public: /* XXX */
@@ -139,6 +146,10 @@ public:
 			dbg(CString("Failed to load instance tags: ") + gcry_strerror(err) + ".");
 
 		m_xOtrOps = InitOps();
+
+		//TODO: find out whether it's safe to remove a timer from within its own RunJob()
+		//method and if it's ok then use the timer_control callback
+		AddTimer(new COtrTimer(this, otrl_message_poll_get_default_interval(m_pUserState)));
 
 		return true;
 	}
@@ -237,6 +248,12 @@ public:
 		assert(ctx->username);
 		return PutModule(CString("[") + ctx->username + "] " + sLine);
 	}
+
+	void TimerFires() {
+		//XXX: PutModule doesn't seem to do anything when called from timer context,
+		//is that //a problem?
+		otrl_message_poll(m_pUserState, &m_xOtrOps, this);
+	}
 };
 
 template<> void TModInfo<COtrMod>(CModInfo& Info) {
@@ -246,6 +263,11 @@ template<> void TModInfo<COtrMod>(CModInfo& Info) {
 }
 
 USERMODULEDEFS(COtrMod, "Off-the-Record (OTR) encryption for private messages")
+
+void COtrTimer::RunJob()
+{
+	static_cast<COtrMod*>(m_pModule)->TimerFires();
+}
 
 // libotr callbacks
 
