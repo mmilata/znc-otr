@@ -16,6 +16,7 @@
 
 #include <znc/IRCNetwork.h>
 #include <znc/Client.h>
+#include <znc/User.h>
 #include <znc/Chan.h>
 #include <znc/Modules.h>
 
@@ -37,6 +38,7 @@ extern "C" {
  * every user has different instance of the module
  * does this also work for different networks of one user? - must be but better try it
  * ... but the keys/fps/instags are shared among networks, no?
+ * we need to include the network in account names (and possibly have separate key/etc files)
  *
  * check if user is admin using CModule::GetUser && CUser::IsAdmin and print a
  * fat warning if he is not
@@ -172,12 +174,16 @@ public:
 
 		gcry_error_t err;
 		char *newmessage = NULL;
+		//FIXME: shouldn't we also include the network?
+		const char *accountname = GetUser()->GetUserName().c_str();
 
 		/* XXX: Due to a bug in libotr-4.0.0, we cannot pass
 		 * OTRL_FRAGMENT_SEND_ALL (fixed in d748757). For now, we send
 		 * the message ourselves, without fragmentation.
+		 *
+		 * I have an idea for workaround but it's fugly.
 		 */
-		err = otrl_message_sending(m_pUserState, &m_xOtrOps, this, "FIXME", PROTOCOL_ID,
+		err = otrl_message_sending(m_pUserState, &m_xOtrOps, this, accountname, PROTOCOL_ID,
 				sTarget.c_str(), OTRL_INSTAG_BEST /*FIXME*/, sMessage.c_str(),
 				NULL, &newmessage, OTRL_FRAGMENT_SEND_SKIP, NULL, NULL, NULL);
 
@@ -198,7 +204,8 @@ public:
 	virtual EModRet OnPrivMsg(CNick& Nick, CString& sMessage) {
 		int res;
 		char *newmessage = NULL;
-		res = otrl_message_receiving(m_pUserState, &m_xOtrOps, this, "FIXME"/*should not really matter?*/,
+		const char *accountname = GetUser()->GetUserName().c_str();
+		res = otrl_message_receiving(m_pUserState, &m_xOtrOps, this, accountname,
 				PROTOCOL_ID, Nick.GetNick().c_str() /* @server? */,
 				sMessage.c_str(), &newmessage, NULL, NULL, NULL, NULL);
 
