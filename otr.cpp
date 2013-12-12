@@ -31,6 +31,7 @@ extern "C" {
 #include <iostream>
 #include <cstring>
 #include <cassert>
+#include <list>
 
 /*
  * TODO:
@@ -52,10 +53,12 @@ extern "C" {
  * logged on the bouncer, plain/ciphertext?
  *
  * encrypt outgoing ACTIONs
+ * http://www.cypherpunks.ca/pipermail/otr-dev/2012-December/001520.html
  */
 
 using std::vector;
 using std::cout;
+using std::list;
 
 /* forward, needed by the module */
 OtrlMessageAppOps InitOps();
@@ -91,6 +94,7 @@ public: /* XXX */
 	CString *pPrivkeyPath = NULL; //FIXME: can I use a = constructor?
 	CString *pFPPath = NULL; //FIXME: m_
 	CString *pInsTagPath = NULL;
+	list<CString> m_Buffer;
 
 	void dbg(CString s)
 	{
@@ -99,6 +103,23 @@ public: /* XXX */
 
 public:
 	MODCONSTRUCTOR(COtrMod) {}
+
+	bool PutModuleBuffered(const CString &sLine) {
+		CUser *user = GetUser();
+		bool attached = user->IsUserAttached();
+		if (attached) {
+			PutModule(sLine);
+		} else {
+			m_Buffer.push_back(sLine);
+		}
+		return attached;
+	}
+
+	bool PutModuleContext(ConnContext *ctx, const CString& sLine) {
+		assert(ctx);
+		assert(ctx->username);
+		return PutModuleBuffered(CString("[") + ctx->username + "] " + sLine);
+	}
 
 	virtual bool OnLoad(const CString& sArgs, CString& sMessage) {
 
@@ -160,6 +181,7 @@ public:
 		delete pPrivkeyPath;
 		delete pFPPath;
 		delete pInsTagPath;
+		//FIXME: is the timer automaticaclly removed?
 	}
 
 	virtual EModRet OnUserMsg(CString& sTarget, CString& sMessage) {
@@ -179,7 +201,6 @@ public:
 		}
 
 		if (bTargetIsChan) {
-			PutModule("Target is channel, not encrypting");
 			return CONTINUE;
 		}
 
@@ -199,7 +220,7 @@ public:
 				NULL, &newmessage, OTRL_FRAGMENT_SEND_SKIP, NULL, NULL, NULL);
 
 		if (err) {
-			PutModule(CString("otrl_message_sending failed: ") + gcry_strerror(err));
+			PutModuleBuffered(CString("otrl_message_sending failed: ") + gcry_strerror(err));
 			return HALT;
 		}
 
@@ -224,7 +245,7 @@ public:
 			//PutModule("Received internal OTR message");
 			return HALT;
 		} else if (res != 0) {
-			PutModule(CString("otrl_message_receiving: unknown return code ")
+			PutModuleBuffered(CString("otrl_message_receiving: unknown return code ")
 					+ CString(res));
 			return HALT;
 		} else if (newmessage == NULL) {
@@ -239,19 +260,22 @@ public:
 		}
 	}
 
+	virtual void OnClientLogin() {
+		for (list<CString>::iterator it = m_Buffer.begin();
+				it != m_Buffer.end();
+				it++) {
+			PutModule(*it);
+		}
+		m_Buffer.clear();
+	}
+
 	virtual void OnModCommand(const CString& sCommand) {
 		// No commands yet
 	}
 
-	bool PutModuleContext(ConnContext *ctx, const CString& sLine) {
-		assert(ctx);
-		assert(ctx->username);
-		return PutModule(CString("[") + ctx->username + "] " + sLine);
-	}
-
 	void TimerFires() {
 		//XXX: PutModule doesn't seem to do anything when called from timer context,
-		//is that //a problem?
+		//can that be a problem?
 		otrl_message_poll(m_pUserState, &m_xOtrOps, this);
 	}
 };
@@ -283,15 +307,16 @@ void otrCreatePrivkey(void *opdata, const char *accountname, const char *protoco
 	assert(mod->m_pUserState);
 	assert(mod->pPrivkeyPath);
 
-	mod->PutModule("otrCreatePrivkey: this will take a shitload of time, freezing ZNC.");
+	mod->PutModuleBuffered("otrCreatePrivkey: this will take a shitload of time, freezing ZNC.");
 	gcry_error_t err;
 	err = otrl_privkey_generate(mod->m_pUserState, mod->pPrivkeyPath->c_str(), accountname,
 			protocol);
 
 	if (err) {
-		mod->PutModule(CString("otrCreatePrivkey: error: ") + gcry_strerror(err) + ".");
-	} else
-		mod->PutModule("otrCreatePrivkey: done.");
+		mod->PutModuleBuffered(CString("otrCreatePrivkey: error: ") + gcry_strerror(err) + ".");
+	} else {
+		mod->PutModuleBuffered("otrCreatePrivkey: done.");
+	}
 }
 
 int otrIsLoggedIn(void *opdata, const char *accountname, const char *protocol,
@@ -314,7 +339,7 @@ void otrUpdateContextList(void *opdata) {
 	/* do nothing? */
 	COtrMod *mod = static_cast<COtrMod*>(opdata);
 	assert(mod);
-	mod->PutModule("Not implemented: otrUpdateContextList");
+	mod->PutModuleBuffered("Not implemented: otrUpdateContextList");
 }
 
 void otrNewFingerprint(void *opdata, OtrlUserState us, const char *accountname,
@@ -322,7 +347,7 @@ void otrNewFingerprint(void *opdata, OtrlUserState us, const char *accountname,
 	/* TODO */
 	COtrMod *mod = static_cast<COtrMod*>(opdata);
 	assert(mod);
-	mod->PutModule("Not implemented: otrNewFingerprint");
+	mod->PutModuleBuffered("Not implemented: otrNewFingerprint");
 }
 
 void otrWriteFingerprints(void *opdata)
@@ -330,7 +355,7 @@ void otrWriteFingerprints(void *opdata)
 	/* TODO: write fingerprints to disk */
 	COtrMod *mod = static_cast<COtrMod*>(opdata);
 	assert(mod);
-	mod->PutModule("Not implemented: otrWriteFingerprints");
+	mod->PutModuleBuffered("Not implemented: otrWriteFingerprints");
 }
 
 void otrGoneSecure(void *opdata, ConnContext *context) {
@@ -390,7 +415,7 @@ void otrHandleSMPEvent(void *opdata, OtrlSMPEvent smp_event, ConnContext *contex
 		unsigned short progress_percent, char *question) {
 	COtrMod *mod = static_cast<COtrMod*>(opdata);
 	assert(mod);
-	mod->PutModule("Not implemented: otrHandleSMPEvent");
+	mod->PutModuleBuffered("Not implemented: otrHandleSMPEvent");
 }
 
 void otrHandleMsgEvent(void *opdata, OtrlMessageEvent msg_event, ConnContext *context,
