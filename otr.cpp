@@ -36,11 +36,6 @@ extern "C" {
 /*
  * TODO:
  *
- * every user has different instance of the module
- * does this also work for different networks of one user? - must be but better try it
- * ... but the keys/fps/instags are shared among networks, no?
- * we need to include the network in account names (and possibly have separate key/etc files)
- *
  * check if user is admin using CModule::GetUser && CUser::IsAdmin and print a
  * fat warning if he is not
  *
@@ -162,7 +157,7 @@ public:
 	}
 
 	virtual EModRet OnUserMsg(CString& sTarget, CString& sMessage) {
-		CIRCNetwork *network = GetNetwork(); //FIXME: can return null in user module
+		CIRCNetwork *network = GetNetwork();
 		assert(network);
 
 		// Do not pass the message to libotr if sTarget is a channel
@@ -183,7 +178,6 @@ public:
 
 		gcry_error_t err;
 		char *newmessage = NULL;
-		//FIXME: shouldn't we also include the network?
 		const char *accountname = GetUser()->GetUserName().c_str();
 
 		/* XXX: Due to a bug in libotr-4.0.0, we cannot pass
@@ -245,8 +239,6 @@ public:
 	}
 
 	void TimerFires() {
-		//XXX: PutModule doesn't seem to do anything when called from timer context,
-		//can that be a problem?
 		otrl_message_poll(m_pUserState, &m_xOtrOps, this);
 	}
 
@@ -500,8 +492,7 @@ template<> void TModInfo<COtrMod>(CModInfo& Info) {
 	//Info.SetArgsHelpText("No args.");
 }
 
-//TODO: make this a network module, maybe?
-USERMODULEDEFS(COtrMod, "Off-the-Record (OTR) encryption for private messages")
+NETWORKMODULEDEFS(COtrMod, "Off-the-Record (OTR) encryption for private messages")
 
 void COtrTimer::RunJob()
 {
