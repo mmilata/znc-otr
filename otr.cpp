@@ -44,9 +44,6 @@ extern "C" {
  * check if user is admin using CModule::GetUser && CUser::IsAdmin and print a
  * fat warning if he is not
  *
- * module callbacks may be invoked even if no client is attached - we probably
- * should save the module messages and replay them later
- *
  * consistent naming, brace style
  *
  * logging - can we detect if it's turned on? can we turn it off? what is
@@ -66,18 +63,6 @@ OtrlMessageAppOps InitOps();
 //TODO: "prpl-irc"? "IRC"?
 #define PROTOCOL_ID "irc"
 
-// helpers
-
-const char* strdup_new(const char *str) {
-	size_t len = strlen(str);
-	char *dup = new char[len + 1];
-	strncpy(dup, str, len)[len] = '\0';
-
-	return dup;
-}
-
-// end helpers
-
 class COtrTimer : public CTimer {
 public:
 	COtrTimer(CModule* pModule, unsigned int uInterval)
@@ -89,17 +74,12 @@ protected:
 
 class COtrMod : public CModule {
 public: /* XXX */
-	OtrlUserState m_pUserState = NULL;
-	OtrlMessageAppOps m_xOtrOps; //FIXME: we can init this just once
-	CString *pPrivkeyPath = NULL; //FIXME: can I use a = constructor?
-	CString *pFPPath = NULL; //FIXME: m_
-	CString *pInsTagPath = NULL;
+	OtrlUserState m_pUserState;
+	OtrlMessageAppOps m_xOtrOps;
+	CString m_sPrivkeyPath;
+	CString m_sFPPath;
+	CString m_sInsTagPath;
 	list<CString> m_Buffer;
-
-	void dbg(CString s)
-	{
-		cout << s << "\n";
-	}
 
 public:
 	MODCONSTRUCTOR(COtrMod) {}
@@ -122,7 +102,6 @@ public:
 	}
 
 	virtual bool OnLoad(const CString& sArgs, CString& sMessage) {
-
 		// Initialize libotr if needed
 		static bool otrInitialized = false;
 		if (!otrInitialized) {
@@ -133,44 +112,52 @@ public:
 		// Initialize userstate
 		m_pUserState = otrl_userstate_create();
 
-		pPrivkeyPath = new CString(GetSavePath() + "/otr.key");
-		pFPPath = new CString(GetSavePath() + "/otr.fp");
-		pInsTagPath = new CString(GetSavePath() + "/otr.instag");
+		m_sPrivkeyPath = GetSavePath() + "/otr.key";
+		m_sFPPath = GetSavePath() + "/otr.fp";
+		m_sInsTagPath = GetSavePath() + "/otr.instag";
 		gcry_error_t err;
 
-		//FIXME: OUTPUT
 		// Load private key
-		err = otrl_privkey_read(m_pUserState, pPrivkeyPath->c_str());
-		if (err == GPG_ERR_NO_ERROR)
-			dbg(CString("Private keys loaded from ") + *pPrivkeyPath + ".");
-		else if (err == gcry_error_from_errno(ENOENT))
-			dbg("No private key found, you need to generate one.");
-		else
-			dbg(CString("Failed to load private key: ") + gcry_strerror(err) + ".");
+		err = otrl_privkey_read(m_pUserState, m_sPrivkeyPath.c_str());
+		if (err == GPG_ERR_NO_ERROR) {
+			PutModuleBuffered("Private keys loaded from " + m_sPrivkeyPath + ".");
+		} else if (err == gcry_error_from_errno(ENOENT)) {
+			PutModuleBuffered("No private key found.");
+		} else {
+			sMessage = (CString("Failed to load private key: ") + gcry_strerror(err) + ".");
+			return false;
+		}
 
 		// Load fingerprints
-		err = otrl_privkey_read_fingerprints(m_pUserState, pFPPath->c_str(), NULL, NULL);
-		if (err == GPG_ERR_NO_ERROR)
-			dbg(CString("Fingerprints loaded from ") + *pFPPath + ".");
-		else if (err == gcry_error_from_errno(ENOENT))
-			dbg("No fingerprint file found.");
-		else
-			dbg(CString("Failed to load fingerprints: ") + gcry_strerror(err) + ".");
+		err = otrl_privkey_read_fingerprints(m_pUserState, m_sFPPath.c_str(), NULL, NULL);
+		if (err == GPG_ERR_NO_ERROR) {
+			PutModuleBuffered("Fingerprints loaded from " + m_sFPPath + ".");
+		} else if (err == gcry_error_from_errno(ENOENT)) {
+			PutModuleBuffered("No fingerprint file found.");
+		} else {
+			sMessage = (CString("Failed to load fingerprints: ") + gcry_strerror(err) + ".");
+			return false;
+		}
 
 		//  Load instance tags
-		err = otrl_instag_read(m_pUserState, pInsTagPath->c_str());
-		if (err == GPG_ERR_NO_ERROR)
-			dbg("Instance tags loaded from " + *pInsTagPath + ".");
-		else if (err == gcry_error_from_errno(ENOENT))
-			dbg("No instance tag file found.");
-		else
-			dbg(CString("Failed to load instance tags: ") + gcry_strerror(err) + ".");
+		err = otrl_instag_read(m_pUserState, m_sInsTagPath.c_str());
+		if (err == GPG_ERR_NO_ERROR) {
+			PutModuleBuffered("Instance tags loaded from " + m_sInsTagPath + ".");
+		} else if (err == gcry_error_from_errno(ENOENT)) {
+			PutModuleBuffered("No instance tag file found.");
+		} else {
+			sMessage = (CString("Failed to load instance tags: ") + gcry_strerror(err) + ".");
+			return false;
+		}
 
+		//FIXME: we can init this just once, have the OtrOps structure global
 		m_xOtrOps = InitOps();
 
 		//TODO: find out whether it's safe to remove a timer from within its own RunJob()
 		//method and if it's ok then use the timer_control callback
 		AddTimer(new COtrTimer(this, otrl_message_poll_get_default_interval(m_pUserState)));
+
+		//Initialize commands here using AddCommand()
 
 		return true;
 	}
@@ -178,17 +165,13 @@ public:
 	virtual ~COtrMod() {
 		if (m_pUserState)
 			otrl_userstate_free(m_pUserState);
-		delete pPrivkeyPath;
-		delete pFPPath;
-		delete pInsTagPath;
-		//FIXME: is the timer automaticaclly removed?
 	}
 
 	virtual EModRet OnUserMsg(CString& sTarget, CString& sMessage) {
-		// Do not pass the message to libotr if sTarget is a channel
-		CIRCNetwork *network = GetNetwork();
+		CIRCNetwork *network = GetNetwork(); //FIXME: can return null in user module
 		assert(network);
 
+		// Do not pass the message to libotr if sTarget is a channel
 		bool bTargetIsChan;;
 		if (sTarget.empty()) {
 			bTargetIsChan = true;
@@ -225,9 +208,7 @@ public:
 		}
 
 		assert(newmessage);
-		// FIXME: aren't we leaking the memory of original sMessage?
 		sMessage = CString(newmessage);
-		//PutModule("Sending '" + sMessage + "'");
 		otrl_message_free(newmessage);
 
 		return CONTINUE;
@@ -252,7 +233,6 @@ public:
 			//PutModule("Received non-encrypted privmsg");
 			return CONTINUE;
 		} else {
-			// FIXME: aren't we leaking the memory of original sMessage?
 			//PutModule("Received encrypted privmsg");
 			sMessage = CString(newmessage);
 			otrl_message_free(newmessage);
@@ -269,10 +249,6 @@ public:
 		m_Buffer.clear();
 	}
 
-	virtual void OnModCommand(const CString& sCommand) {
-		// No commands yet
-	}
-
 	void TimerFires() {
 		//XXX: PutModule doesn't seem to do anything when called from timer context,
 		//can that be a problem?
@@ -286,6 +262,7 @@ template<> void TModInfo<COtrMod>(CModInfo& Info) {
 	//Info.SetArgsHelpText("No args.");
 }
 
+//TODO: make this a network module, maybe?
 USERMODULEDEFS(COtrMod, "Off-the-Record (OTR) encryption for private messages")
 
 void COtrTimer::RunJob()
@@ -305,11 +282,11 @@ void otrCreatePrivkey(void *opdata, const char *accountname, const char *protoco
 	assert(mod);
 	assert(0 == strcmp(protocol, PROTOCOL_ID));
 	assert(mod->m_pUserState);
-	assert(mod->pPrivkeyPath);
+	assert(!mod->m_sPrivkeyPath.empty());
 
 	mod->PutModuleBuffered("otrCreatePrivkey: this will take a shitload of time, freezing ZNC.");
 	gcry_error_t err;
-	err = otrl_privkey_generate(mod->m_pUserState, mod->pPrivkeyPath->c_str(), accountname,
+	err = otrl_privkey_generate(mod->m_pUserState, mod->m_sPrivkeyPath.c_str(), accountname,
 			protocol);
 
 	if (err) {
@@ -381,12 +358,14 @@ int otrMaxMessageSize(void *opdata, ConnContext *context) {
 }
 
 const char* otrAccountName(void *opdata, const char *account, const char *protocol) {
-	/* TODO */
-	return strdup_new(account);
+	/* FIXME: It appears that this callback is not used in libotr ...
+	 * depending on how is *account allocated and what is done with the
+	 * returned value, just returning it might not be a good idea.
+	 */
+	return account;
 }
 
-void otrFreeString(void *opdata, const char *str) {
-	delete[] str;
+void otrFreeStringNop(void *opdata, const char *str) {
 }
 
 void otrReceiveSymkey(void *opdata, ConnContext *context, unsigned int use,
@@ -399,15 +378,15 @@ const char* otrErrorMessage(void *opdata, ConnContext *context, OtrlErrorCode er
 	/* TODO: improve the explanations */
 	switch (err_code){
 	case OTRL_ERRCODE_ENCRYPTION_ERROR:
-		return strdup_new("Error encrypting message.");
+		return "Error encrypting message.";
 	case OTRL_ERRCODE_MSG_NOT_IN_PRIVATE:
-		return strdup_new("Sent an encrypted message to somebody who is not in OTR session.");
+		return "Sent an encrypted message to somebody who is not in OTR session.";
 	case OTRL_ERRCODE_MSG_UNREADABLE:
-		return strdup_new("Sent an unreadable encrypted message.");
+		return "Sent an unreadable encrypted message.";
 	case OTRL_ERRCODE_MSG_MALFORMED:
-		return strdup_new("Malformed message sent.");
+		return "Malformed message sent.";
 	default:
-		return strdup_new("Unknown error.");
+		return "Unknown error.";
 	}
 }
 
@@ -489,11 +468,12 @@ void otrHandleMsgEvent(void *opdata, OtrlMessageEvent msg_event, ConnContext *co
 void otrCreateInsTag(void *opdata, const char *accountname, const char *protocol) {
 	COtrMod *mod = static_cast<COtrMod*>(opdata);
 	assert(mod);
+	assert(!mod->m_sInsTagPath.empty());
 
 	OtrlUserState us = mod->m_pUserState;
 	assert(us);
 
-	otrl_instag_generate(us, mod->pInsTagPath->c_str(), accountname, protocol);
+	otrl_instag_generate(us, mod->m_sInsTagPath.c_str(), accountname, protocol);
 }
 
 // end of callbacks
@@ -512,10 +492,10 @@ OtrlMessageAppOps InitOps() {
 		/* still_secure */	otrStillSecure,
 		/* max_message_size */	otrMaxMessageSize,
 		/* account_name */	otrAccountName,
-		/* account_name_free */	otrFreeString,
+		/* account_name_free */	otrFreeStringNop,
 		/* received_symkey */	otrReceiveSymkey,
 		/* otr_error_message */	otrErrorMessage,
-		/* otr_error_message_free */ otrFreeString,
+		/* otr_error_message_free */ otrFreeStringNop,
 		/* resent_msg_prefix */	NULL, /* uses [resent] by default */
 		/* resent_msg_prefix_free */ NULL,
 		/* handle_smp_event */	otrHandleSMPEvent,
