@@ -201,9 +201,10 @@ public:
 			return HALT;
 		}
 
-		assert(newmessage);
-		sMessage = CString(newmessage);
-		otrl_message_free(newmessage);
+		if (newmessage) {
+			sMessage = CString(newmessage);
+			otrl_message_free(newmessage);
+		}
 
 		return CONTINUE;
 	}
