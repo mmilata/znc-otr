@@ -19,6 +19,7 @@
 #include <znc/User.h>
 #include <znc/Chan.h>
 #include <znc/Modules.h>
+#include <znc/Threads.h>
 
 extern "C" {
 #include <libotr/proto.h>
@@ -27,6 +28,9 @@ extern "C" {
 #include <libotr/privkey.h>
 #include <libotr/instag.h>
 }
+
+// See http://www.gnupg.org/documentation/manuals/gcrypt/Multi_002dThreading.html
+GCRY_THREAD_OPTION_PTHREAD_IMPL;
 
 #include <iostream>
 #include <cstring>
@@ -46,6 +50,9 @@ extern "C" {
  *
  * encrypt outgoing ACTIONs
  * http://www.cypherpunks.ca/pipermail/otr-dev/2012-December/001520.html
+ *
+ * when sending "?OTR?", libotr substitutes it with something that contains
+ * newlines which confuses irc server - investigate
  */
 
 using std::vector;
@@ -54,6 +61,7 @@ using std::list;
 
 //TODO: "prpl-irc"? "IRC"?
 #define PROTOCOL_ID "irc"
+#define GENKEY_TIMER_INTERVAL 10
 
 class COtrTimer : public CTimer {
 public:
@@ -64,7 +72,19 @@ protected:
 	virtual void RunJob();
 };
 
+//can we use socket/pipe to notify the main thread? would be saner than using timer
+class COtrGenKeyTimer : public CTimer {
+public:
+	COtrGenKeyTimer(CModule* pModule)
+		: CTimer(pModule, GENKEY_TIMER_INTERVAL, /*run forever*/ 0, "OtrGenKeyTimer", "OTR key generation watchdog") {}
+	virtual ~COtrGenKeyTimer() {}
+protected:
+	virtual void RunJob();
+};
+
 class COtrMod : public CModule {
+friend class COtrGenKeyTimer;
+
 private:
 	static OtrlMessageAppOps m_xOtrOps;
 	OtrlUserState m_pUserState;
@@ -72,6 +92,16 @@ private:
 	CString m_sFPPath;
 	CString m_sInsTagPath;
 	list<CString> m_Buffer;
+
+	CMutex m_GenKeyMutex;
+	// following members are protected by the mutex
+	enum GenKeyStatus {
+		IDLE,    // No key generation in progress
+		RUNNING, // Background thread is computing, timer is active
+		DONE     // Background thread ended, timer finishes the generation
+	} m_GenKeyStatus;
+	void *m_NewKey;
+	gcry_error_t m_GenKeyError;
 
 public:
 	MODCONSTRUCTOR(COtrMod) {}
@@ -94,6 +124,16 @@ public:
 	}
 
 	virtual bool OnLoad(const CString& sArgs, CString& sMessage) {
+		// Initialize libgcrypt for multithreaded usage
+		gcry_error_t err;
+		err = gcry_control(GCRYCTL_SET_THREAD_CBS, &gcry_threads_pthread);
+		if (err)
+		{
+			sMessage = (CString("Failed to initialize gcrypt threading: ") +
+					gcry_strerror(err));
+			return false;
+		}
+
 		// Initialize libotr if needed
 		static bool otrInitialized = false;
 		if (!otrInitialized) {
@@ -103,11 +143,11 @@ public:
 
 		// Initialize userstate
 		m_pUserState = otrl_userstate_create();
+		m_GenKeyMutex = CMutex(); //FIXME: does this need to be here?
 
 		m_sPrivkeyPath = GetSavePath() + "/otr.key";
 		m_sFPPath = GetSavePath() + "/otr.fp";
 		m_sInsTagPath = GetSavePath() + "/otr.instag";
-		gcry_error_t err;
 
 		// Load private key
 		err = otrl_privkey_read(m_pUserState, m_sPrivkeyPath.c_str());
@@ -142,8 +182,9 @@ public:
 			return false;
 		}
 
-		//TODO: find out whether it's safe to remove a timer from within its own RunJob()
-		//method and if it's ok then use the timer_control callback
+		// TODO: It appears that a timer can safely be removed from it's
+		// own RunJob() method by calling Stop() ... this means we can implement
+		// timer_control and the timer doesn't have to run all the time
 		AddTimer(new COtrTimer(this, otrl_message_poll_get_default_interval(m_pUserState)));
 
 		//Initialize commands here using AddCommand()
@@ -243,6 +284,19 @@ public:
 	}
 
 private:
+	// genkey thread routine
+	static void* GenKeyThreadFunc(void *data) {
+		COtrMod *mod = static_cast<COtrMod*>(data);
+		assert(mod);
+
+		gcry_error_t err = otrl_privkey_generate_calculate(mod->m_NewKey);
+		CMutexLocker locker = CMutexLocker(mod->m_GenKeyMutex, true);
+		mod->m_GenKeyStatus = DONE;
+		mod->m_GenKeyError = err;
+
+		return NULL;
+	}
+
 	// libotr callbacks
 
 	static OtrlPolicy otrPolicy(void *opdata, ConnContext *context) {
@@ -257,17 +311,26 @@ private:
 		assert(mod->m_pUserState);
 		assert(!mod->m_sPrivkeyPath.empty());
 
-		mod->PutModuleBuffered("otrCreatePrivkey: this will take a shitload of time, "
-				"freezing ZNC.");
-		gcry_error_t err;
-		err = otrl_privkey_generate(mod->m_pUserState, mod->m_sPrivkeyPath.c_str(),
-				accountname, protocol);
+		CMutexLocker locker = CMutexLocker(mod->m_GenKeyMutex, true);
+		if (mod->m_GenKeyStatus == IDLE) {
+			gcry_error_t err;
+			err = otrl_privkey_generate_start(mod->m_pUserState, accountname, protocol,
+					&(mod->m_NewKey));
+			if (err)
+			{
+				mod->PutModuleBuffered(CString("Key generation failed: ") +
+						gcry_strerror(err));
+				return;
+			}
 
-		if (err) {
-			mod->PutModuleBuffered(CString("otrCreatePrivkey: error: ") +
-					gcry_strerror(err) + ".");
+			mod->PutModuleBuffered("Starting key generation in a background thread.");
+			mod->m_GenKeyStatus = RUNNING;
+			CThread::startThread(GenKeyThreadFunc, static_cast<void*>(mod));
+			mod->AddTimer(new COtrGenKeyTimer(mod));
 		} else {
-			mod->PutModuleBuffered("otrCreatePrivkey: done.");
+			mod->PutModuleBuffered(CString("Tried to generate a key for ") + accountname +
+					" while another key generation is in progress. "
+					"Please try again once the first key generation is finished.");
 		}
 	}
 
@@ -497,4 +560,28 @@ NETWORKMODULEDEFS(COtrMod, "Off-the-Record (OTR) encryption for private messages
 void COtrTimer::RunJob()
 {
 	static_cast<COtrMod*>(m_pModule)->TimerFires();
+}
+
+// TODO: both timers as friends or both just call COtrMod method
+void COtrGenKeyTimer::RunJob()
+{
+	COtrMod *mod = static_cast<COtrMod*>(m_pModule);
+	assert(mod);
+
+	CMutexLocker locker = CMutexLocker(mod->m_GenKeyMutex, true);
+	if (mod->m_GenKeyStatus == COtrMod::DONE) {
+		if (!mod->m_GenKeyError) {
+			mod->m_GenKeyError = otrl_privkey_generate_finish(mod->m_pUserState,
+					mod->m_NewKey, mod->m_sPrivkeyPath.c_str());
+		}
+		if (mod->m_GenKeyError) {
+			mod->PutModuleBuffered(CString("Key generation failed: ") +
+					gcry_strerror(mod->m_GenKeyError));
+		} else {
+			mod->PutModuleBuffered("Key generation finished.");
+		}
+		Stop(); // timer will be removed
+		mod->m_NewKey = NULL;
+		mod->m_GenKeyStatus = COtrMod::IDLE;
+	}
 }
