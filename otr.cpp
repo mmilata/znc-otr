@@ -20,6 +20,7 @@
 #include <znc/Chan.h>
 #include <znc/Modules.h>
 #include <znc/Threads.h>
+#include <znc/Utils.h>
 
 extern "C" {
 #include <libotr/proto.h>
@@ -123,6 +124,55 @@ public:
 		return PutModuleBuffered(CString("[") + ctx->username + "] " + sLine);
 	}
 
+	static CString HumanFingerprint(Fingerprint *fprint) {
+		char human[OTRL_PRIVKEY_FPRINT_HUMAN_LEN];
+		otrl_privkey_hash_to_human(human, fprint->fingerprint);
+		return CString(human);
+	}
+
+	void CmdContexts(const CString& sLine) {
+		if (!m_pUserState->context_root) {
+			PutModule("No contexts available.");
+			return;
+		}
+
+		CTable table;
+		table.AddColumn("Peer");
+		table.AddColumn("State");
+		table.AddColumn("Fingerprint");
+		table.AddColumn("Trust");
+
+		ConnContext *ctx;
+		for (ctx = m_pUserState->context_root; ctx; ctx = ctx->next) {
+			// Only show master contexts.
+			if (ctx->m_context != ctx)
+				continue;
+
+			assert(ctx->username);
+			const char *state =
+				(ctx->msgstate == OTRL_MSGSTATE_PLAINTEXT ? "plaintext" :
+				(ctx->msgstate == OTRL_MSGSTATE_ENCRYPTED ? "encrypted" :
+				(ctx->msgstate == OTRL_MSGSTATE_FINISHED ? "finished" :
+					"unknown")));
+
+			Fingerprint *fp;
+			for (fp = ctx->fingerprint_root.next; fp; fp = fp->next) {
+				const char *trust;
+				if (fp->trust && fp->trust[0] != '\0') {
+					trust = fp->trust;
+				} else {
+					trust = "not trusted";
+				}
+				table.AddRow();
+				table.SetCell("Peer", ctx->username);
+				table.SetCell("State", state);
+				table.SetCell("Fingerprint", HumanFingerprint(fp));
+				table.SetCell("Trust", trust);
+			}
+		}
+		PutModule(table);
+	}
+
 	virtual bool OnLoad(const CString& sArgs, CString& sMessage) {
 		// Initialize libgcrypt for multithreaded usage
 		gcry_error_t err;
@@ -187,7 +237,11 @@ public:
 		// timer_control and the timer doesn't have to run all the time
 		AddTimer(new COtrTimer(this, otrl_message_poll_get_default_interval(m_pUserState)));
 
-		//Initialize commands here using AddCommand()
+		// Initialize commands
+		AddHelpCommand();
+		AddCommand("Contexts", static_cast<CModCommand::ModCmdFunc>(&COtrMod::CmdContexts),
+				"",
+				"List OTR contexts.");
 
 		return true;
 	}
@@ -251,6 +305,8 @@ public:
 		res = otrl_message_receiving(m_pUserState, &m_xOtrOps, this, accountname,
 				PROTOCOL_ID, Nick.GetNick().c_str() /* @server? */,
 				sMessage.c_str(), &newmessage, NULL, NULL, NULL, NULL);
+
+		//TODO: handle OTRL_TLV_DISCONNECTED tlv
 
 		if (res == 1) {
 			//PutModule("Received internal OTR message");
