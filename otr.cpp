@@ -359,17 +359,22 @@ private:
 
 	static void otrNewFingerprint(void *opdata, OtrlUserState us, const char *accountname,
 			const char *protocol, const char *username, unsigned char fingerprint[20]) {
-		/* TODO */
+		/* TODO show the fingerprint + our fingerprint + auth instructions */
 		COtrMod *mod = static_cast<COtrMod*>(opdata);
 		assert(mod);
 		mod->PutModuleBuffered("Not implemented: otrNewFingerprint");
 	}
 
 	static void otrWriteFingerprints(void *opdata) {
-		/* TODO: write fingerprints to disk */
 		COtrMod *mod = static_cast<COtrMod*>(opdata);
 		assert(mod);
-		mod->PutModuleBuffered("Not implemented: otrWriteFingerprints");
+
+		gcry_error_t err;
+		err = otrl_privkey_write_fingerprints(mod->m_pUserState, mod->m_sFPPath.c_str());
+		if (err) {
+			mod->PutModuleBuffered(CString("Failed to write fingerprints: ") +
+					gcry_strerror(err));
+		}
 	}
 
 	static void otrGoneSecure(void *opdata, ConnContext *context) {
@@ -522,7 +527,7 @@ private:
 		ops.inject_message = otrInjectMessage;
 		ops.update_context_list =  otrUpdateContextList;
 		ops.new_fingerprint = otrNewFingerprint;
-		ops.write_fingerprints =  otrWriteFingerprints;
+		ops.write_fingerprints = otrWriteFingerprints;
 		ops.gone_secure = otrGoneSecure;
 		ops.gone_insecure = otrGoneInsecure;
 		ops.still_secure = otrStillSecure;
