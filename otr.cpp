@@ -130,6 +130,15 @@ public:
 		return CString(human);
 	}
 
+	void WriteFingerprints() {
+		gcry_error_t err;
+		err = otrl_privkey_write_fingerprints(m_pUserState, m_sFPPath.c_str());
+		if (err) {
+			PutModuleBuffered(CString("Failed to write fingerprints: ") +
+					gcry_strerror(err));
+		}
+	}
+
 	void CmdContexts(const CString& sLine) {
 		if (!m_pUserState->context_root) {
 			PutModule("No contexts available.");
@@ -171,6 +180,35 @@ public:
 			}
 		}
 		PutModule(table);
+	}
+
+	void CmdTrust(const CString& sLine) {
+		const char *nick = sLine.Token(1, false).c_str();
+		// TODO: is this safe, storage-wise?
+		const char *accountname = GetUser()->GetUserName().c_str();
+		ConnContext *ctx = otrl_context_find(m_pUserState, nick, accountname,
+				PROTOCOL_ID, OTRL_INSTAG_BEST, 0, NULL, NULL, NULL);
+		if (!ctx) {
+			PutModule(CString("Context for nick '") + nick + "' not found.");
+			return;
+		}
+
+		Fingerprint *fprint = ctx->active_fingerprint;
+		if (!fprint) {
+			PutModuleContext(ctx, "Fingerprint not found.");
+			return;
+		}
+
+		int already_trusted = otrl_context_is_fingerprint_trusted(fprint);
+		if (already_trusted) {
+			PutModuleContext(ctx, CString("Fingerprint ") + HumanFingerprint(fprint) +
+					" already trusted.");
+		} else {
+			otrl_context_set_trust(fprint, "manual");
+			PutModuleContext(ctx, CString("Fingerprint ") + HumanFingerprint(fprint) +
+					" trusted!");
+			WriteFingerprints();
+		}
 	}
 
 	virtual bool OnLoad(const CString& sArgs, CString& sMessage) {
@@ -242,6 +280,10 @@ public:
 		AddCommand("Contexts", static_cast<CModCommand::ModCmdFunc>(&COtrMod::CmdContexts),
 				"",
 				"List OTR contexts.");
+		AddCommand("Trust", static_cast<CModCommand::ModCmdFunc>(&COtrMod::CmdTrust),
+				"nick",
+				"Mark the user's fingerprint as trusted after veryfing it over "
+				"secure channel.");
 
 		return true;
 	}
@@ -424,13 +466,7 @@ private:
 	static void otrWriteFingerprints(void *opdata) {
 		COtrMod *mod = static_cast<COtrMod*>(opdata);
 		assert(mod);
-
-		gcry_error_t err;
-		err = otrl_privkey_write_fingerprints(mod->m_pUserState, mod->m_sFPPath.c_str());
-		if (err) {
-			mod->PutModuleBuffered(CString("Failed to write fingerprints: ") +
-					gcry_strerror(err));
-		}
+		mod->WriteFingerprints();
 	}
 
 	static void otrGoneSecure(void *opdata, ConnContext *context) {
