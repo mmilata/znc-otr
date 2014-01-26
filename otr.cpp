@@ -28,6 +28,7 @@ extern "C" {
 #include <libotr/userstate.h>
 #include <libotr/privkey.h>
 #include <libotr/instag.h>
+#include <libotr/version.h>
 }
 
 // See http://www.gnupg.org/documentation/manuals/gcrypt/Multi_002dThreading.html
@@ -63,6 +64,19 @@ using std::list;
 //TODO: "prpl-irc"? "IRC"?
 #define PROTOCOL_ID "irc"
 #define GENKEY_TIMER_INTERVAL 10
+
+/* Due to a bug in libotr-4.0.0, passing OTRL_FRAGMENT_SEND_ALL does not work
+ * because otrInjectMessage callback receives NULL as opdata. This workaround
+ * passes the pointer to the COtrMod instance in a global variable. The bug was
+ * fixed in d748757 thus the workaround shouldn't be needed in libotr > 4.0.0.
+ *
+ * TODO: not thread safe, check that znc cannot run the callback in multiple
+ * threads.
+ */
+#if (OTRL_VERSION_MAJOR == 4 && OTRL_VERSION_MINOR == 0 && OTRL_VERSION_SUB == 0)
+#define INJECT_WORKAROUND_NEEDED
+#endif
+void *inject_workaround_mod;
 
 class COtrTimer : public CTimer {
 public:
@@ -317,27 +331,22 @@ public:
 		char *newmessage = NULL;
 		const char *accountname = GetUser()->GetUserName().c_str();
 
-		/* XXX: Due to a bug in libotr-4.0.0, we cannot pass
-		 * OTRL_FRAGMENT_SEND_ALL (fixed in d748757). For now, we send
-		 * the message ourselves, without fragmentation.
-		 *
-		 * I have an idea for workaround but it's fugly.
-		 */
+		inject_workaround_mod = this;
 		err = otrl_message_sending(m_pUserState, &m_xOtrOps, this, accountname, PROTOCOL_ID,
 				sTarget.c_str(), OTRL_INSTAG_BEST /*FIXME*/, sMessage.c_str(),
-				NULL, &newmessage, OTRL_FRAGMENT_SEND_SKIP, NULL, NULL, NULL);
+				NULL, &newmessage, OTRL_FRAGMENT_SEND_ALL, NULL, NULL, NULL);
 
 		if (err) {
 			PutModuleBuffered(CString("otrl_message_sending failed: ") + gcry_strerror(err));
 			return HALT;
 		}
 
+		// Message was sent with otrInjectMessage, do nothing
 		if (newmessage) {
-			sMessage = CString(newmessage);
 			otrl_message_free(newmessage);
 		}
 
-		return CONTINUE;
+		return HALT;
 	}
 
 	virtual EModRet OnPrivMsg(CNick& Nick, CString& sMessage) {
@@ -440,6 +449,9 @@ private:
 
 	static void otrInjectMessage(void *opdata, const char *accountname, const char *protocol,
 			const char *recipient, const char *message) {
+#ifdef INJECT_WORKAROUND_NEEDED
+		opdata = inject_workaround_mod;
+#endif
 		COtrMod *mod = static_cast<COtrMod*>(opdata);
 		assert(mod);
 		assert(0 == strcmp(protocol, PROTOCOL_ID));
