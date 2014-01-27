@@ -335,6 +335,7 @@ public:
 		err = otrl_message_sending(m_pUserState, &m_xOtrOps, this, accountname, PROTOCOL_ID,
 				sTarget.c_str(), OTRL_INSTAG_BEST /*FIXME*/, sMessage.c_str(),
 				NULL, &newmessage, OTRL_FRAGMENT_SEND_ALL, NULL, NULL, NULL);
+		inject_workaround_mod = NULL;
 
 		if (err) {
 			PutModuleBuffered(CString("otrl_message_sending failed: ") + gcry_strerror(err));
@@ -450,7 +451,7 @@ private:
 	static void otrInjectMessage(void *opdata, const char *accountname, const char *protocol,
 			const char *recipient, const char *message) {
 #ifdef INJECT_WORKAROUND_NEEDED
-		opdata = inject_workaround_mod;
+		opdata = (opdata ? opdata : inject_workaround_mod);
 #endif
 		COtrMod *mod = static_cast<COtrMod*>(opdata);
 		assert(mod);
