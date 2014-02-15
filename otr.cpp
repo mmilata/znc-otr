@@ -358,7 +358,8 @@ public:
 		inject_workaround_mod = this;
 		err = otrl_message_sending(m_pUserState, &m_xOtrOps, this, accountname, PROTOCOL_ID,
 				sTarget.c_str(), OTRL_INSTAG_BEST /*FIXME*/, sMessage.c_str(),
-				NULL, &newmessage, OTRL_FRAGMENT_SEND_ALL, NULL, NULL, NULL);
+				NULL, &newmessage, OTRL_FRAGMENT_SEND_ALL_BUT_LAST,
+				NULL, NULL, NULL);
 		inject_workaround_mod = NULL;
 
 		if (err) {
@@ -366,12 +367,12 @@ public:
 			return HALT;
 		}
 
-		// Message was sent with otrInjectMessage, do nothing
 		if (newmessage) {
+			sMessage = CString(newmessage);
 			otrl_message_free(newmessage);
 		}
 
-		return HALT;
+		return CONTINUE;
 	}
 
 	virtual EModRet OnPrivMsg(CNick& Nick, CString& sMessage) {
