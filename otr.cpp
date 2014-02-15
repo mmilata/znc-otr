@@ -378,12 +378,21 @@ public:
 	virtual EModRet OnPrivMsg(CNick& Nick, CString& sMessage) {
 		int res;
 		char *newmessage = NULL;
+		OtrlTLV *tlvs = NULL;
+		ConnContext *ctx = NULL;
 		const char *accountname = GetUser()->GetUserName().c_str();
 		res = otrl_message_receiving(m_pUserState, &m_xOtrOps, this, accountname,
 				PROTOCOL_ID, Nick.GetNick().c_str() /* @server? */,
-				sMessage.c_str(), &newmessage, NULL, NULL, NULL, NULL);
+				sMessage.c_str(), &newmessage, &tlvs, &ctx, NULL, NULL);
 
-		//TODO: handle OTRL_TLV_DISCONNECTED tlv
+		if (ctx && otrl_tlv_find(tlvs, OTRL_TLV_DISCONNECTED)) {
+			PutModuleContext(ctx, "Buddy has finished the conversation. "
+					"Use the Finish command to enter plaintext mode, "
+					"or send ?OTR? to start new OTR session.");
+		}
+		if (tlvs) {
+			otrl_tlv_free(tlvs);
+		}
 
 		if (res == 1) {
 			//PutModule("Received internal OTR message");
