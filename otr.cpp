@@ -196,14 +196,21 @@ public:
 		PutModule(table);
 	}
 
-	void CmdTrust(const CString& sLine) {
-		const char *nick = sLine.Token(1, false).c_str();
-		// TODO: is this safe, storage-wise?
-		const char *accountname = GetUser()->GetUserName().c_str();
-		ConnContext *ctx = otrl_context_find(m_pUserState, nick, accountname,
-				PROTOCOL_ID, OTRL_INSTAG_BEST, 0, NULL, NULL, NULL);
+	ConnContext* FindContext(CString& sNick) {
+		ConnContext *ctx = otrl_context_find(m_pUserState,
+				sNick.c_str(), GetUser()->GetUserName().c_str(),
+				PROTOCOL_ID, OTRL_INSTAG_BEST,
+				0, NULL, NULL, NULL);
 		if (!ctx) {
-			PutModule(CString("Context for nick '") + nick + "' not found.");
+			PutModuleBuffered("Context for nick '" + sNick + "' not found.");
+		}
+		return ctx;
+	}
+
+	void CmdTrust(const CString& sLine) {
+		CString sNick = sLine.Token(1, false);
+		ConnContext *ctx = FindContext(sNick);
+		if (!ctx) {
 			return;
 		}
 
@@ -223,6 +230,18 @@ public:
 					" trusted!");
 			WriteFingerprints();
 		}
+	}
+
+	void CmdFinish(const CString& sLine) {
+		CString sNick = sLine.Token(1, false);
+		ConnContext *ctx = FindContext(sNick);
+		if (!ctx) {
+			return;
+		}
+
+		otrl_message_disconnect(m_pUserState, &m_xOtrOps, this,
+				ctx->accountname, PROTOCOL_ID, sNick.c_str(), ctx->their_instance);
+		PutModuleBuffered("Finished conversation with " + sNick + ".");
 	}
 
 	virtual bool OnLoad(const CString& sArgs, CString& sMessage) {
@@ -298,11 +317,16 @@ public:
 				"nick",
 				"Mark the user's fingerprint as trusted after veryfing it over "
 				"secure channel.");
+		AddCommand("Finish", static_cast<CModCommand::ModCmdFunc>(&COtrMod::CmdFinish),
+				"nick",
+				"Terminate an OTR conversation.");
 
 		return true;
 	}
 
 	virtual ~COtrMod() {
+		/* TODO deactivate timer (race condition when userstate is
+		 * freed but timer still runs) */
 		if (m_pUserState)
 			otrl_userstate_free(m_pUserState);
 	}
@@ -412,7 +436,6 @@ private:
 	}
 
 	static void otrCreatePrivkey(void *opdata, const char *accountname, const char *protocol) {
-		/* TODO: key generation needs to happen in background thread */
 		COtrMod *mod = static_cast<COtrMod*>(opdata);
 		assert(mod);
 		assert(0 == strcmp(protocol, PROTOCOL_ID));
@@ -444,8 +467,8 @@ private:
 
 	static int otrIsLoggedIn(void *opdata, const char *accountname, const char *protocol,
 			const char *recipient) {
-		// 1 = online, 0 = offline, -1 = not sure
-		return -1;
+		// Assume always online, otrl_message_disconnect does nothing otherwise.
+		return 1;
 	}
 
 	static void otrInjectMessage(void *opdata, const char *accountname, const char *protocol,
