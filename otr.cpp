@@ -52,9 +52,6 @@ GCRY_THREAD_OPTION_PTHREAD_IMPL;
  *
  * encrypt outgoing ACTIONs
  * http://www.cypherpunks.ca/pipermail/otr-dev/2012-December/001520.html
- *
- * when sending "?OTR?", libotr substitutes it with something that contains
- * newlines which confuses irc server - investigate
  */
 
 using std::vector;
@@ -361,6 +358,27 @@ public:
 			otrl_userstate_free(m_pUserState);
 	}
 
+	void DefaultQueryWorkaround(CString& sMessage) {
+		/* libotr replaces ?OTR? request by a string that contains html tags and newlines.
+		 * The newlines confuse IRC server, and if we sent them in a separate PRIVMSG then
+		 * they would show up regardless of other side's otr plugin presnece, defeating
+		 * the purpose of the message. We replace that message here, keeping the OTR tag.
+		 */
+		CString sPattern = "?OTR*\n<b>*</b> has requested an "
+			"<a href=\"http://otr.cypherpunks.ca/\">Off-the-Record "
+			"private conversation</a>.  However, you do not have a plugin "
+			"to support that.\nSee <a href=\"http://otr.cypherpunks.ca/\">"
+			"http://otr.cypherpunks.ca/</a> for more information.";
+
+		if (!sMessage.WildCmp(sPattern)) {
+			return;
+		}
+
+		sMessage = sMessage.FirstLine() + " Requesting an off-the-record private "
+			"conversation. However, you do not have a plugin to support that. "
+			"See http://otr.cypherpunks.ca/ for more information.";
+	}
+
 	virtual EModRet OnUserMsg(CString& sTarget, CString& sMessage) {
 		CIRCNetwork *network = GetNetwork();
 		assert(network);
@@ -399,6 +417,7 @@ public:
 
 		if (newmessage) {
 			sMessage = CString(newmessage);
+			DefaultQueryWorkaround(sMessage);
 			otrl_message_free(newmessage);
 		}
 
