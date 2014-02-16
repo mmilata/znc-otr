@@ -544,7 +544,7 @@ private:
 	}
 
 	static void otrUpdateContextList(void *opdata) {
-		/* do nothing? */
+		// do nothing?
 		COtrMod *mod = static_cast<COtrMod*>(opdata);
 		assert(mod);
 		mod->PutModuleBuffered("Not implemented: otrUpdateContextList");
@@ -552,7 +552,7 @@ private:
 
 	static void otrNewFingerprint(void *opdata, OtrlUserState us, const char *accountname,
 			const char *protocol, const char *username, unsigned char fingerprint[20]) {
-		/* TODO show the fingerprint + our fingerprint + auth instructions */
+		// do nothing?
 		COtrMod *mod = static_cast<COtrMod*>(opdata);
 		assert(mod);
 		mod->PutModuleBuffered("Not implemented: otrNewFingerprint");
@@ -567,19 +567,39 @@ private:
 	static void otrGoneSecure(void *opdata, ConnContext *context) {
 		COtrMod *mod = static_cast<COtrMod*>(opdata);
 		assert(mod);
-		mod->PutModuleContext(context, "Gone SECURE");
+		mod->PutModuleContext(context, "Gone SECURE.");
+
+		assert(context->active_fingerprint);
+		if (otrl_context_is_fingerprint_trusted(context->active_fingerprint)) {
+			return;
+		}
+
+		char ourfp[OTRL_PRIVKEY_FPRINT_HUMAN_LEN];
+		const char *accountname = mod->GetUser()->GetUserName().c_str();
+		otrl_privkey_fingerprint(mod->m_pUserState, ourfp, accountname, PROTOCOL_ID);
+
+		mod->PutModuleContext(context, "Peer is not authenticated. "
+				      "There are two ways of verifying their identity:");
+		mod->PutModuleContext(context, "1. Use SMP [NOT IMPLEMENTED]."); /* TODO */
+		mod->PutModuleContext(context, CString("2. Compare their fingerprint over a secure "
+				      "channel, then type trust ") + context->username + ".");
+		mod->PutModuleContext(context, CString("Your fingerprint:  ") + ourfp);
+		mod->PutModuleContext(context, CString("Their fingerprint: ") +
+				      HumanFingerprint(context->active_fingerprint));
 	}
 
 	static void otrGoneInsecure(void *opdata, ConnContext *context) {
+		/* This callback doesn't seem to be used by libotr-4.0.0. */
 		COtrMod *mod = static_cast<COtrMod*>(opdata);
 		assert(mod);
-		mod->PutModuleContext(context, "Gone INSECURE");
+		mod->PutModuleContext(context, "Gone INSECURE.");
 	}
 
 	static void otrStillSecure(void *opdata, ConnContext *context, int is_reply) {
 		COtrMod *mod = static_cast<COtrMod*>(opdata);
 		assert(mod);
-		mod->PutModuleContext(context, "Still SECURE");
+		mod->PutModuleContext(context, CString("Still SECURE (restarted by ") +
+				               (is_reply ? "us" : "peer") + ").");
 	}
 
 	static int otrMaxMessageSize(void *opdata, ConnContext *context) {
