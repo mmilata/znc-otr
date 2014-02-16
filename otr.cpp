@@ -526,21 +526,6 @@ private:
 		mod->PutIRC(CString("PRIVMSG ") + recipient + " :" + message);
 	}
 
-	static void otrUpdateContextList(void *opdata) {
-		// do nothing?
-		COtrMod *mod = static_cast<COtrMod*>(opdata);
-		assert(mod);
-		mod->PutModuleBuffered("Not implemented: otrUpdateContextList");
-	}
-
-	static void otrNewFingerprint(void *opdata, OtrlUserState us, const char *accountname,
-			const char *protocol, const char *username, unsigned char fingerprint[20]) {
-		// do nothing?
-		COtrMod *mod = static_cast<COtrMod*>(opdata);
-		assert(mod);
-		mod->PutModuleBuffered("Not implemented: otrNewFingerprint");
-	}
-
 	static void otrWriteFingerprints(void *opdata) {
 		COtrMod *mod = static_cast<COtrMod*>(opdata);
 		assert(mod);
@@ -714,8 +699,8 @@ private:
 		ops.create_privkey = otrCreatePrivkey;
 		ops.is_logged_in = otrIsLoggedIn;
 		ops.inject_message = otrInjectMessage;
-		ops.update_context_list =  otrUpdateContextList;
-		ops.new_fingerprint = otrNewFingerprint;
+		ops.update_context_list =  NULL; // do nothing
+		ops.new_fingerprint = NULL; // do nothing
 		ops.write_fingerprints = otrWriteFingerprints;
 		ops.gone_secure = otrGoneSecure;
 		ops.gone_insecure = otrGoneInsecure;
@@ -725,9 +710,9 @@ private:
 		ops.account_name_free = otrFreeStringNop;
 		ops.received_symkey = otrReceiveSymkey;
 		ops.otr_error_message = otrErrorMessage;
-		ops.otr_error_message_free =  otrFreeStringNop;
+		ops.otr_error_message_free = otrFreeStringNop;
 		ops.resent_msg_prefix = NULL; // uses [resent] by default
-		ops.resent_msg_prefix_free =  NULL;
+		ops.resent_msg_prefix_free = NULL;
 		ops.handle_smp_event = otrHandleSMPEvent;
 		ops.handle_msg_event = otrHandleMsgEvent;
 		ops.create_instag = otrCreateInsTag;
