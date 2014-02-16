@@ -79,6 +79,7 @@ protected:
 };
 
 class COtrMod : public CModule {
+friend class COtrTimer;
 friend class COtrGenKeyTimer;
 
 private:
@@ -454,10 +455,6 @@ public:
 		m_Buffer.clear();
 	}
 
-	void TimerFires() {
-		otrl_message_poll(m_pUserState, &m_xOtrOps, this);
-	}
-
 private:
 	// genkey thread routine
 	static void* GenKeyThreadFunc(void *data) {
@@ -738,10 +735,11 @@ NETWORKMODULEDEFS(COtrMod, "Off-the-Record (OTR) encryption for private messages
 
 void COtrTimer::RunJob()
 {
-	static_cast<COtrMod*>(m_pModule)->TimerFires();
+	COtrMod *mod = static_cast<COtrMod*>(m_pModule);
+	assert(mod);
+	otrl_message_poll(mod->m_pUserState, &mod->m_xOtrOps, mod);
 }
 
-// TODO: both timers as friends or both just call COtrMod method
 void COtrGenKeyTimer::RunJob()
 {
 	COtrMod *mod = static_cast<COtrMod*>(m_pModule);
