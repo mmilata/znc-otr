@@ -39,26 +39,10 @@ GCRY_THREAD_OPTION_PTHREAD_IMPL;
 #include <cassert>
 #include <list>
 
-/*
- * TODO:
- *
- * check if user is admin using CModule::GetUser && CUser::IsAdmin and print a
- * fat warning if he is not
- *
- * consistent naming, brace style
- *
- * logging - can we detect if it's turned on? can we turn it off? what is
- * logged on the bouncer, plain/ciphertext?
- *
- * encrypt outgoing ACTIONs
- * http://www.cypherpunks.ca/pipermail/otr-dev/2012-December/001520.html
- */
-
 using std::vector;
 using std::cout;
 using std::list;
 
-//TODO: "prpl-irc"? "IRC"?
 #define PROTOCOL_ID "irc"
 #define GENKEY_TIMER_INTERVAL 10
 
@@ -84,7 +68,7 @@ protected:
 	virtual void RunJob();
 };
 
-//can we use socket/pipe to notify the main thread? would be saner than using timer
+// TODO: can we use socket/pipe to notify the main thread? would be saner than using timer
 class COtrGenKeyTimer : public CTimer {
 public:
 	COtrGenKeyTimer(CModule* pModule)
@@ -539,7 +523,6 @@ private:
 		assert(mod);
 		assert(0 == strcmp(protocol, PROTOCOL_ID));
 
-		//TODO: is there a better way to send the message?
 		mod->PutIRC(CString("PRIVMSG ") + recipient + " :" + message);
 	}
 
@@ -624,7 +607,6 @@ private:
 	}
 
 	static const char* otrErrorMessage(void *opdata, ConnContext *context, OtrlErrorCode err_code) {
-		/* TODO: improve the explanations */
 		switch (err_code){
 		case OTRL_ERRCODE_ENCRYPTION_ERROR:
 			return "Error encrypting message.";
