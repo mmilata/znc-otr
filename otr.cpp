@@ -196,7 +196,8 @@ public:
 		PutModule(table);
 	}
 
-	ConnContext* FindContext(CString& sNick) {
+	ConnContext* GetContextFromArg(const CString& sLine) {
+		CString sNick = sLine.Token(1, false);
 		ConnContext *ctx = otrl_context_find(m_pUserState,
 				sNick.c_str(), GetUser()->GetUserName().c_str(),
 				PROTOCOL_ID, OTRL_INSTAG_BEST,
@@ -207,16 +208,24 @@ public:
 		return ctx;
 	}
 
-	void CmdTrust(const CString& sLine) {
-		CString sNick = sLine.Token(1, false);
-		ConnContext *ctx = FindContext(sNick);
+	bool GetFprintFromArg(const CString& sLine, ConnContext*& ctx, Fingerprint*& fprint) {
+		ctx = GetContextFromArg(sLine);
 		if (!ctx) {
-			return;
+			/* GetContextFromArg printed error message */
+			return false;
 		}
-
-		Fingerprint *fprint = ctx->active_fingerprint;
+		fprint = ctx->active_fingerprint;
 		if (!fprint) {
-			PutModuleContext(ctx, "Fingerprint not found.");
+			PutModuleContext(ctx, "No active fingerprint.");
+			return false;
+		}
+		return true;
+	}
+
+	void CmdTrust(const CString& sLine) {
+		ConnContext *ctx;
+		Fingerprint *fprint;
+		if (!GetFprintFromArg(sLine, ctx, fprint)) {
 			return;
 		}
 
@@ -232,16 +241,34 @@ public:
 		}
 	}
 
+	void CmdDistrust(const CString& sLine) {
+		ConnContext *ctx;
+		Fingerprint *fprint;
+		if (!GetFprintFromArg(sLine, ctx, fprint)) {
+			return;
+		}
+
+		int trusted = otrl_context_is_fingerprint_trusted(fprint);
+		if (!trusted) {
+			PutModuleContext(ctx, CString("Already not trusting ") +
+					 HumanFingerprint(fprint) + ".");
+		} else {
+			otrl_context_set_trust(fprint, "");
+			PutModuleContext(ctx, CString("Fingerprint ") + HumanFingerprint(fprint) +
+					" distrusted!");
+			WriteFingerprints();
+		}
+	}
+
 	void CmdFinish(const CString& sLine) {
-		CString sNick = sLine.Token(1, false);
-		ConnContext *ctx = FindContext(sNick);
+		ConnContext *ctx = GetContextFromArg(sLine);
 		if (!ctx) {
 			return;
 		}
 
 		otrl_message_disconnect(m_pUserState, &m_xOtrOps, this,
-				ctx->accountname, PROTOCOL_ID, sNick.c_str(), ctx->their_instance);
-		PutModuleBuffered("Finished conversation with " + sNick + ".");
+				ctx->accountname, PROTOCOL_ID, ctx->username, ctx->their_instance);
+		PutModuleBuffered(CString("Finished conversation with ") + ctx->username + ".");
 	}
 
 	virtual bool OnLoad(const CString& sArgs, CString& sMessage) {
@@ -317,6 +344,9 @@ public:
 				"nick",
 				"Mark the user's fingerprint as trusted after veryfing it over "
 				"secure channel.");
+		AddCommand("Distrust", static_cast<CModCommand::ModCmdFunc>(&COtrMod::CmdDistrust),
+				"nick",
+				"Mark user's fingerprint as not trusted.");
 		AddCommand("Finish", static_cast<CModCommand::ModCmdFunc>(&COtrMod::CmdFinish),
 				"nick",
 				"Terminate an OTR conversation.");
