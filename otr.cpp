@@ -571,14 +571,6 @@ private:
 		return 400; /* TODO */
 	}
 
-	static const char* otrAccountName(void *opdata, const char *account, const char *protocol) {
-		/* FIXME: It appears that this callback is not used in libotr ...
-		 * depending on how is *account allocated and what is done with the
-		 * returned value, just returning it might not be a good idea.
-		 */
-		return account;
-	}
-
 	static void otrFreeStringNop(void *opdata, const char *str) {
 	}
 
@@ -703,8 +695,8 @@ private:
 		ops.gone_insecure = otrGoneInsecure;
 		ops.still_secure = otrStillSecure;
 		ops.max_message_size = otrMaxMessageSize;
-		ops.account_name = otrAccountName;
-		ops.account_name_free = otrFreeStringNop;
+		ops.account_name = NULL; // unused, deprecated
+		ops.account_name_free = NULL;
 		ops.received_symkey = otrReceiveSymkey;
 		ops.otr_error_message = otrErrorMessage;
 		ops.otr_error_message_free = otrFreeStringNop;
