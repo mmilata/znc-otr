@@ -78,6 +78,23 @@ protected:
 	virtual void RunJob();
 };
 
+struct COtrAppData {
+	bool bSmpReply;
+
+	COtrAppData() {
+		bSmpReply = false;
+	}
+
+	static void Add(void *data, ConnContext *context) {
+		context->app_data = new COtrAppData();
+		context->app_data_free = Free;
+	}
+
+	static void Free(void *appdata) {
+		delete static_cast<COtrAppData*>(appdata);
+	}
+};
+
 class COtrMod : public CModule {
 friend class COtrTimer;
 friend class COtrGenKeyTimer;
@@ -163,10 +180,12 @@ public:
 			Fingerprint *fp;
 			for (fp = ctx->fingerprint_root.next; fp; fp = fp->next) {
 				const char *trust;
-				if (fp->trust && fp->trust[0] != '\0') {
-					trust = fp->trust;
-				} else {
+				if (!fp->trust || fp->trust[0] == '\0') {
 					trust = "not trusted";
+				} else if (0 == strcmp(fp->trust, "smp")) {
+					trust = "shared secret";
+				} else {
+					trust = fp->trust;
 				}
 				table.AddRow();
 				table.SetCell("Peer", ctx->username);
@@ -179,11 +198,11 @@ public:
 	}
 
 	ConnContext* GetContextFromArg(const CString& sLine) {
-		CString sNick = sLine.Token(1, false);
+		CString sNick = sLine.Token(1);
 		ConnContext *ctx = otrl_context_find(m_pUserState,
 				sNick.c_str(), GetUser()->GetUserName().c_str(),
 				PROTOCOL_ID, OTRL_INSTAG_BEST,
-				0, NULL, NULL, NULL);
+				0, NULL, COtrAppData::Add, NULL);
 		if (!ctx) {
 			PutModuleBuffered("Context for nick '" + sNick + "' not found.");
 		}
@@ -250,7 +269,106 @@ public:
 
 		otrl_message_disconnect(m_pUserState, &m_xOtrOps, this,
 				ctx->accountname, PROTOCOL_ID, ctx->username, ctx->their_instance);
-		PutModuleBuffered(CString("Finished conversation with ") + ctx->username + ".");
+		PutModuleContext(ctx, "Conversation finished.");
+	}
+
+	void DoSMP(ConnContext *ctx, const CString &sQuestion, const CString &sSecret) {
+		if (sSecret.Equals("")) {
+			PutModuleContext(ctx, "No secret given!");
+			return;
+		}
+
+		if (ctx->msgstate != OTRL_MSGSTATE_ENCRYPTED) {
+			PutModuleContext(ctx, "Not in OTR session.");
+			return;
+		}
+
+		COtrAppData *ad = static_cast<COtrAppData*>(ctx->app_data);
+		assert(ad);
+
+		if (ad->bSmpReply) {
+			otrl_message_respond_smp(m_pUserState, &m_xOtrOps, this, ctx,
+					reinterpret_cast<const unsigned char *>(sSecret.c_str()),
+					sSecret.length());
+			PutModuleContext(ctx, "Responded to authentication.");
+		} else {
+			if (sQuestion.Equals("")) {
+				otrl_message_initiate_smp(m_pUserState, &m_xOtrOps, this, ctx,
+						reinterpret_cast<const unsigned char *>(sSecret.c_str()),
+						sSecret.length());
+			} else {
+				otrl_message_initiate_smp_q(m_pUserState, &m_xOtrOps, this, ctx,
+						sQuestion.c_str(),
+						reinterpret_cast<const unsigned char *>(sSecret.c_str()),
+						sSecret.length());
+			}
+			PutModuleContext(ctx, "Initiated authentication.");
+		}
+
+		ad->bSmpReply = false;
+	}
+
+	void CmdAuth(const CString& sLine) {
+		ConnContext *ctx = GetContextFromArg(sLine);
+		if (!ctx) {
+			return;
+		}
+
+		CString sSecret = sLine.Token(2, true);
+		DoSMP(ctx, "", sSecret);
+	}
+
+	void CmdAuthQ(const CString& sLine) {
+		ConnContext *ctx = GetContextFromArg(sLine);
+		if (!ctx) {
+			return;
+		}
+
+		COtrAppData *ad = static_cast<COtrAppData*>(ctx->app_data);
+		assert(ad);
+		if (ad->bSmpReply) {
+			PutModuleContext(ctx, "Authentication in progress. Use Auth to "
+					"respond with secret, or AuthAbort to abort it");
+			return;
+		}
+
+		CString sRest = sLine.Token(2, true);
+		if (sRest.length() == 0 || sRest[0] != '[') {
+			PutModuleContext(ctx, "No question found. Did you enclose it in "
+					"square brackets?");
+			return;
+		}
+
+		size_t iQEnd = sRest.find(']', 1);
+		if (iQEnd == CString::npos) {
+			PutModuleContext(ctx, "Closing bracket missing for question.");
+			return;
+		}
+
+		if (iQEnd+1 == sRest.length()) {
+			PutModuleContext(ctx, "No secret given!");
+			return;
+		}
+
+		CString sQuestion = sRest.substr(1, iQEnd-1);
+		CString sSecret = sRest.substr(iQEnd+1, CString::npos);
+		sSecret.Trim();
+
+		DoSMP(ctx, sQuestion, sSecret);
+	}
+
+	void CmdAuthAbort(const CString& sLine) {
+		ConnContext *ctx = GetContextFromArg(sLine);
+		if (!ctx) {
+			return;
+		}
+
+		COtrAppData *ad = static_cast<COtrAppData*>(ctx->app_data);
+		assert(ad);
+		ad->bSmpReply = false;
+
+		otrl_message_abort_smp(m_pUserState, &m_xOtrOps, this, ctx);
+		PutModuleContext(ctx, "Authentication aborted.");
 	}
 
 	virtual bool OnLoad(const CString& sArgs, CString& sMessage) {
@@ -291,7 +409,8 @@ public:
 		}
 
 		// Load fingerprints
-		err = otrl_privkey_read_fingerprints(m_pUserState, m_sFPPath.c_str(), NULL, NULL);
+		err = otrl_privkey_read_fingerprints(m_pUserState, m_sFPPath.c_str(),
+				COtrAppData::Add, NULL);
 		if (err == GPG_ERR_NO_ERROR) {
 			PutModuleBuffered("Fingerprints loaded from " + m_sFPPath + ".");
 		} else if (err == gcry_error_from_errno(ENOENT)) {
@@ -332,6 +451,15 @@ public:
 		AddCommand("Finish", static_cast<CModCommand::ModCmdFunc>(&COtrMod::CmdFinish),
 				"nick",
 				"Terminate an OTR conversation.");
+		AddCommand("Auth", static_cast<CModCommand::ModCmdFunc>(&COtrMod::CmdAuth),
+				"nick secret",
+				"Authenticate using shared secret.");
+		AddCommand("AuthQ", static_cast<CModCommand::ModCmdFunc>(&COtrMod::CmdAuthQ),
+				"nick [question] secret",
+				"Authenticate using shared secret (providing a question).");
+		AddCommand("AuthAbort", static_cast<CModCommand::ModCmdFunc>(&COtrMod::CmdAuthAbort),
+				"nick",
+				"Abort authentication with peer.");
 
 		return true;
 	}
@@ -392,7 +520,7 @@ public:
 		err = otrl_message_sending(m_pUserState, &m_xOtrOps, this, accountname, PROTOCOL_ID,
 				sTarget.c_str(), OTRL_INSTAG_BEST /*FIXME*/, sMessage.c_str(),
 				NULL, &newmessage, OTRL_FRAGMENT_SEND_ALL_BUT_LAST,
-				NULL, NULL, NULL);
+				NULL, COtrAppData::Add, NULL);
 		inject_workaround_mod = NULL;
 
 		if (err) {
@@ -417,7 +545,8 @@ public:
 		const char *accountname = GetUser()->GetUserName().c_str();
 		res = otrl_message_receiving(m_pUserState, &m_xOtrOps, this, accountname,
 				PROTOCOL_ID, Nick.GetNick().c_str() /* @server? */,
-				sMessage.c_str(), &newmessage, &tlvs, &ctx, NULL, NULL);
+				sMessage.c_str(), &newmessage, &tlvs, &ctx,
+				COtrAppData::Add, NULL);
 
 		if (ctx && otrl_tlv_find(tlvs, OTRL_TLV_DISCONNECTED)) {
 			PutModuleContext(ctx, "Buddy has finished the conversation. "
@@ -544,8 +673,10 @@ private:
 		otrl_privkey_fingerprint(mod->m_pUserState, ourfp, accountname, PROTOCOL_ID);
 
 		mod->PutModuleContext(context, "Peer is not authenticated. "
-				      "There are two ways of verifying their identity:");
-		mod->PutModuleContext(context, "1. Use SMP [NOT IMPLEMENTED]."); /* TODO */
+					"There are two ways of verifying their identity:");
+		mod->PutModuleContext(context, CString("1. Agree on a common secret (do not type "
+					"it into the chat), then type auth ") + context->username +
+					" <secret>.");
 		mod->PutModuleContext(context, CString("2. Compare their fingerprint over a secure "
 				      "channel, then type trust ") + context->username + ".");
 		mod->PutModuleContext(context, CString("Your fingerprint:  ") + ourfp);
@@ -564,7 +695,7 @@ private:
 		COtrMod *mod = static_cast<COtrMod*>(opdata);
 		assert(mod);
 		mod->PutModuleContext(context, CString("Still SECURE (restarted by ") +
-				               (is_reply ? "us" : "peer") + ").");
+				               (is_reply ? "us" : "peer") + ")."); /* XXX correct? */
 	}
 
 	static int otrMaxMessageSize(void *opdata, ConnContext *context) {
@@ -599,7 +730,47 @@ private:
 			unsigned short progress_percent, char *question) {
 		COtrMod *mod = static_cast<COtrMod*>(opdata);
 		assert(mod);
-		mod->PutModuleBuffered("Not implemented: otrHandleSMPEvent");
+
+		assert(context);
+		COtrAppData *ad = static_cast<COtrAppData*>(context->app_data);
+		assert(ad);
+
+		switch (smp_event) {
+		case OTRL_SMPEVENT_ASK_FOR_ANSWER:
+			assert(question);
+			mod->PutModuleContext(context, "Peer wants to authenticate. To complete, "
+					"answer the following question:");
+			mod->PutModuleContext(context, question);
+			mod->PutModuleContext(context, CString("Answer by typing auth ") +
+					context->username + " <answer>.");
+			ad->bSmpReply = true;
+			break;
+		case OTRL_SMPEVENT_ASK_FOR_SECRET:
+			mod->PutModuleContext(context, CString("Peer wants to authenticate. To "
+					"complete, type auth ") + context->username + " <secret>.");
+			ad->bSmpReply = true;
+			break;
+		case OTRL_SMPEVENT_IN_PROGRESS:
+			mod->PutModuleContext(context, "Peer replied to authentication request.");
+			break;
+		case OTRL_SMPEVENT_SUCCESS:
+			mod->PutModuleContext(context, "Successfully authenticated.");
+			break;
+		case OTRL_SMPEVENT_ABORT:
+			mod->PutModuleContext(context, "Authentication aborted.");
+			break;
+		case OTRL_SMPEVENT_FAILURE:
+		case OTRL_SMPEVENT_ERROR:
+		case OTRL_SMPEVENT_CHEATED:
+			mod->PutModuleContext(context, "Authentication failed.");
+			if (smp_event != OTRL_SMPEVENT_FAILURE) {
+				otrl_message_abort_smp(mod->m_pUserState, &mod->m_xOtrOps, opdata, context);
+			}
+			break;
+		default:
+			mod->PutModuleContext(context, "Unknown authentication event.");
+			break;
+		}
 	}
 
 	static void otrHandleMsgEvent(void *opdata, OtrlMessageEvent msg_event, ConnContext *context,
