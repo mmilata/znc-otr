@@ -471,7 +471,7 @@ public:
 			otrl_userstate_free(m_pUserState);
 	}
 
-	void DefaultQueryWorkaround(CString& sMessage) {
+	static void DefaultQueryWorkaround(CString& sMessage) {
 		/* libotr replaces ?OTR? request by a string that contains html tags and newlines.
 		 * The newlines confuse IRC server, and if we sent them in a separate PRIVMSG then
 		 * they would show up regardless of other side's otr plugin presnece, defeating
@@ -492,26 +492,21 @@ public:
 			"See http://otr.cypherpunks.ca/ for more information.";
 	}
 
-	virtual EModRet OnUserMsg(CString& sTarget, CString& sMessage) {
+	bool TargetIsChan(const CString& sTarget) {
 		CIRCNetwork *network = GetNetwork();
 		assert(network);
 
-		// Do not pass the message to libotr if sTarget is a channel
-		bool bTargetIsChan;;
 		if (sTarget.empty()) {
-			bTargetIsChan = true;
+			return true;
 		} else if (network->GetChanPrefixes().empty()) {
 			// RFC 2811
-			bTargetIsChan = (CString("&#!+").find(sTarget[0]) != CString::npos);
+			return (CString("&#!+").find(sTarget[0]) != CString::npos);
 		} else {
-			bTargetIsChan =
-				(network->GetChanPrefixes().find(sTarget[0]) != CString::npos);
+			return (network->GetChanPrefixes().find(sTarget[0]) != CString::npos);
 		}
+	}
 
-		if (bTargetIsChan) {
-			return CONTINUE;
-		}
-
+	EModRet SendEncrypted(CString& sTarget, CString& sMessage) {
 		gcry_error_t err;
 		char *newmessage = NULL;
 		const char *accountname = GetUser()->GetUserName().c_str();
@@ -519,7 +514,7 @@ public:
 		inject_workaround_mod = this;
 		err = otrl_message_sending(m_pUserState, &m_xOtrOps, this, accountname, PROTOCOL_ID,
 				sTarget.c_str(), OTRL_INSTAG_BEST /*FIXME*/, sMessage.c_str(),
-				NULL, &newmessage, OTRL_FRAGMENT_SEND_ALL_BUT_LAST,
+				NULL, &newmessage, OTRL_FRAGMENT_SEND_ALL,
 				NULL, COtrAppData::Add, NULL);
 		inject_workaround_mod = NULL;
 
@@ -529,12 +524,23 @@ public:
 		}
 
 		if (newmessage) {
-			sMessage = CString(newmessage);
-			DefaultQueryWorkaround(sMessage);
+			// libotr injected the message
 			otrl_message_free(newmessage);
+			return HALT;
+		} else {
+			// not an OTR message
+			return CONTINUE;
+		}
+	}
+
+	virtual EModRet OnUserMsg(CString& sTarget, CString& sMessage) {
+		// Do not pass the message to libotr if sTarget is a channel
+		if (TargetIsChan(sTarget)) {
+			return CONTINUE;
 		}
 
-		return CONTINUE;
+		return SendEncrypted(sTarget, sMessage);
+	}
 	}
 
 	virtual EModRet OnPrivMsg(CNick& Nick, CString& sMessage) {
@@ -649,7 +655,12 @@ private:
 		assert(mod);
 		assert(0 == strcmp(protocol, PROTOCOL_ID));
 
-		mod->PutIRC(CString("PRIVMSG ") + recipient + " :" + message);
+		CString sMessage(message);
+		if (!mod->TargetIsChan(CString(recipient))) {
+			DefaultQueryWorkaround(sMessage);
+		}
+
+		mod->PutIRC(CString("PRIVMSG ") + recipient + " :" + sMessage);
 	}
 
 	static void otrWriteFingerprints(void *opdata) {
