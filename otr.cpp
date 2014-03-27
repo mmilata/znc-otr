@@ -541,6 +541,21 @@ public:
 
 		return SendEncrypted(sTarget, sMessage);
 	}
+
+	virtual EModRet OnUserAction(CString& sTarget, CString& sMessage) {
+		if (TargetIsChan(sTarget)) {
+			return CONTINUE;
+		}
+
+		// http://www.cypherpunks.ca/pipermail/otr-dev/2012-December/001520.html
+		// suggests using following:
+		// CString sLine = "\001ACTION " + sMessage + "\001";
+		// However, irssi and weechat plugins send it like this:
+		CString sLine = "/me " + sMessage;
+
+		// Try sending the formatted line. If CONTINUE is returned,
+		// pass unformatted to other plugins/caller.
+		return SendEncrypted(sTarget, sLine);
 	}
 
 	virtual EModRet OnPrivMsg(CNick& Nick, CString& sMessage) {
@@ -577,6 +592,13 @@ public:
 			//PutModule("Received encrypted privmsg");
 			sMessage = CString(newmessage);
 			otrl_message_free(newmessage);
+
+			// Handle /me as sent by irssi and weechat plugins
+			if (sMessage.Left(4) == "/me ") {
+				sMessage.LeftChomp(4);
+				sMessage = "\001ACTION " + sMessage + "\001";
+			}
+
 			return CONTINUE;
 		}
 	}
