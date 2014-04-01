@@ -726,7 +726,13 @@ private:
 	}
 
 	static int otrMaxMessageSize(void *opdata, ConnContext *context) {
-		return 400; /* TODO */
+		// RFC 1459 says that maximum irc line length is 512 characters which would mean
+		// that the maximum size of the message itself is 512 - strlen("PRIVMSG ") -
+		// recipient_len - strlen(" :") - strlen("\r\n").
+		// HOWEVER, server prepends the sender to the message upon receiving PRIVMSG and
+		// truncates the result to 512 chars. There doesn't seem to be a maximum length of
+		// the prefix. So ... I guess 400 should work with reasonably long nicks/hostnames.
+		return 400;
 	}
 
 	static void otrFreeStringNop(void *opdata, const char *str) {
