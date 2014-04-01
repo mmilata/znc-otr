@@ -564,7 +564,7 @@ public:
 				COtrAppData::Add, NULL);
 
 		if (ctx && otrl_tlv_find(tlvs, OTRL_TLV_DISCONNECTED)) {
-			PutModuleContext(ctx, "Buddy has finished the conversation. "
+			PutModuleContext(ctx, "Peer has finished the conversation. "
 					"Use the Finish command to enter plaintext mode, "
 					"or send ?OTR? to start new OTR session.");
 		}
@@ -815,8 +815,8 @@ private:
 					"the message was not sent.");
 			break;
 		case OTRL_MSGEVENT_CONNECTION_ENDED:
-			mod->PutModuleContext(context, "Message has not been sent because our buddy has "
-					"ended the private conversation. We should either close the "
+			mod->PutModuleContext(context, "Message has not been sent because our peer has "
+					"ended the private conversation. You should either close the "
 					"connection, or refresh it.");
 			break;
 		case OTRL_MSGEVENT_SETUP_ERROR:
