@@ -431,11 +431,6 @@ public:
 			return false;
 		}
 
-		// TODO: It appears that a timer can safely be removed from it's
-		// own RunJob() method by calling Stop() ... this means we can implement
-		// timer_control and the timer doesn't have to run all the time
-		AddTimer(new COtrTimer(this, otrl_message_poll_get_default_interval(m_pUserState)));
-
 		// Initialize commands
 		AddHelpCommand();
 		AddCommand("Contexts", static_cast<CModCommand::ModCmdFunc>(&COtrMod::CmdContexts),
@@ -465,8 +460,7 @@ public:
 	}
 
 	virtual ~COtrMod() {
-		/* TODO deactivate timer (race condition when userstate is
-		 * freed but timer still runs) */
+		// No need to deactivate timers, they are removed in CModule::~CModule().
 		if (m_pUserState)
 			otrl_userstate_free(m_pUserState);
 	}
@@ -885,6 +879,35 @@ private:
 		otrl_instag_generate(us, mod->m_sInsTagPath.c_str(), accountname, protocol);
 	}
 
+	static void otrTimerControl(void *opdata, unsigned int interval) {
+		COtrMod *mod = static_cast<COtrMod*>(opdata);
+		assert(mod);
+
+		CTimer *pTimer = mod->FindTimer("OtrTimer");
+
+		if (pTimer) {
+			if (interval > 0) {
+				// Change the timer interval
+				pTimer->Start(interval);
+			} else {
+				// Mark the timer for deletion - we can't directly remove it because
+				// this callback can be invoked from the timer's RunJob method
+				pTimer->Stop();
+				// Remove it from the set of module's timers so that we don't try to
+				// start it again (it wouldn't work)
+				mod->UnlinkTimer(pTimer);
+			}
+		} else {
+			if (interval > 0) {
+				// Create new timer
+				mod->AddTimer(new COtrTimer(mod, interval));
+			} else {
+				// Should never happen?
+				mod->PutModuleBuffered("Error: trying to delete nonexistent timer");
+			}
+		}
+	}
+
 	static OtrlMessageAppOps InitOps() {
 		OtrlMessageAppOps ops;
 
@@ -911,7 +934,7 @@ private:
 		ops.create_instag = otrCreateInsTag;
 		ops.convert_msg = NULL; // no conversion
 		ops.convert_free = NULL;
-		ops.timer_control = NULL; // we'll handle the timer ourselves
+		ops.timer_control = otrTimerControl;
 
 		return ops;
 	}
