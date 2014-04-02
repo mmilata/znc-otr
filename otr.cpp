@@ -456,6 +456,17 @@ public:
 				"nick",
 				"Abort authentication with peer.");
 
+		// Warn if we are not an administrator
+		// We should check if we are the only administrator but the user map may not be
+		// fully populated at this time.
+		if (!GetUser()->IsAdmin()) {
+			PutModuleBuffered("WARNING: You are not a ZNC admin. The ZNC administrator "
+					"has access to your private keys which can be used to read "
+					"your encrypted messages and to impersonate you.");
+			PutModuleBuffered("Do you trust their good intentions and the ability to "
+					"protect your data from other people?");
+		}
+
 		return true;
 	}
 
