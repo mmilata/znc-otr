@@ -671,6 +671,11 @@ private:
 		assert(mod);
 		assert(0 == strcmp(protocol, PROTOCOL_ID));
 
+		// libotr-4.0.0 injects empty message when sending to recipient in finished state
+		if (!message[0]) {
+			return;
+		}
+
 		CString sMessage(message);
 		if (!mod->TargetIsChan(CString(recipient))) {
 			DefaultQueryWorkaround(sMessage);
