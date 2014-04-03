@@ -227,27 +227,49 @@ public:
 		PutModule(table);
 	}
 
-	ConnContext* GetContextFromArg(const CString& sLine) {
+	ConnContext* GetContextFromArg(const CString& sLine, bool bWarnIfNotFound = true) {
 		CString sNick = sLine.Token(1);
 		ConnContext *ctx = otrl_context_find(m_pUserState,
 				sNick.c_str(), GetUser()->GetUserName().c_str(),
 				PROTOCOL_ID, OTRL_INSTAG_BEST,
 				0, NULL, NULL, NULL);
-		if (!ctx) {
+		if (!ctx && bWarnIfNotFound) {
 			PutModuleBuffered("Context for nick '" + sNick + "' not found.");
 		}
 		return ctx;
 	}
 
 	bool GetFprintFromArg(const CString& sLine, ConnContext*& ctx, Fingerprint*& fprint) {
-		ctx = GetContextFromArg(sLine);
-		if (!ctx) {
-			/* GetContextFromArg printed error message */
-			return false;
+		fprint = NULL;
+		//Try interpreting the argument as a nick and if we don't find a context, interpret
+		//it as human readable form of fingerprint.
+		ctx = GetContextFromArg(sLine, false);
+		if (ctx) {
+			fprint = ctx->active_fingerprint;
+			if (!fprint) {
+				PutModuleContext(ctx, "No active fingerprint.");
+				return false;
+			}
+		} else {
+			CString sNormalizedFP = sLine.Token(1, true).Replace_n(" ", "");
+
+			for (ConnContext *curctx = m_pUserState->context_root;
+					curctx;
+					curctx = curctx->next) {
+				for (Fingerprint *curfp = curctx->fingerprint_root.next;
+						curfp;
+						curfp = curfp->next) {
+					CString sCtxFP = HumanFingerprint(curfp).Replace_n(" ", "");
+					if (sCtxFP.Equals(sNormalizedFP, false)) {
+						fprint = curfp;
+						ctx = curctx;
+					}
+				}
+			}
 		}
-		fprint = ctx->active_fingerprint;
 		if (!fprint) {
-			PutModuleContext(ctx, "No active fingerprint.");
+			PutModuleBuffered("Fingerprint not found. This comand takes either nick "
+					"or hexadecimal fingerprint as an argument.");
 			return false;
 		}
 		return true;
@@ -467,23 +489,23 @@ public:
 				"",
 				"List OTR contexts.");
 		AddCommand("Trust", static_cast<CModCommand::ModCmdFunc>(&COtrMod::CmdTrust),
-				"nick",
+				"<nick|fingerprint>",
 				"Mark the user's fingerprint as trusted after veryfing it over "
 				"secure channel.");
 		AddCommand("Distrust", static_cast<CModCommand::ModCmdFunc>(&COtrMod::CmdDistrust),
-				"nick",
+				"<nick|fingerprint>",
 				"Mark user's fingerprint as not trusted.");
 		AddCommand("Finish", static_cast<CModCommand::ModCmdFunc>(&COtrMod::CmdFinish),
-				"nick",
+				"<nick>",
 				"Terminate an OTR conversation.");
 		AddCommand("Auth", static_cast<CModCommand::ModCmdFunc>(&COtrMod::CmdAuth),
-				"nick secret",
+				"<nick> <secret>",
 				"Authenticate using shared secret.");
 		AddCommand("AuthQ", static_cast<CModCommand::ModCmdFunc>(&COtrMod::CmdAuthQ),
-				"nick [question] secret",
+				"<nick> <[question]> <secret>",
 				"Authenticate using shared secret (providing a question).");
 		AddCommand("AuthAbort", static_cast<CModCommand::ModCmdFunc>(&COtrMod::CmdAuthAbort),
-				"nick",
+				"<nick>",
 				"Abort authentication with peer.");
 
 		// Warn if we are not an administrator
