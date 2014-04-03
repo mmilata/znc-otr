@@ -183,6 +183,7 @@ public:
 		table.AddColumn("Peer");
 		table.AddColumn("State");
 		table.AddColumn("Fingerprint");
+		table.AddColumn("Act");
 		table.AddColumn("Trust");
 
 		ConnContext *ctx;
@@ -222,6 +223,9 @@ public:
 				}
 				table.SetCell("Fingerprint", HumanFingerprint(fp));
 				table.SetCell("Trust", trust);
+				if (fp == best_ctx->active_fingerprint) {
+					table.SetCell("Act", " * ");
+				}
 			}
 		}
 		PutModule(table);
