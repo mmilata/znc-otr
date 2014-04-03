@@ -152,6 +152,27 @@ public:
 		}
 	}
 
+	void WarnIfLoggingEnabled() {
+		assert(GetNetwork());
+		bool bUserMod = GetUser()->GetModules().FindModule("log");
+		bool bNetworkMod = GetNetwork()->GetModules().FindModule("log");
+
+		if (bUserMod || bNetworkMod) {
+			CString sMsg = "WARNING: The log module is loaded. Type ";
+			if (bUserMod) {
+				sMsg += "/msg *status UnloadMod log ";
+				if (bNetworkMod) {
+					sMsg += "and ";
+				}
+			}
+			if (bNetworkMod) {
+				sMsg += "/msg *status UnloadMod --type=network log ";
+			}
+			sMsg += "to prevent ZNC from logging the conversation to disk.";
+			PutModuleBuffered(sMsg);
+		}
+	}
+
 	void CmdContexts(const CString& sLine) {
 		if (!m_pUserState->context_root) {
 			PutModule("No contexts available.");
@@ -704,27 +725,30 @@ private:
 	static void otrGoneSecure(void *opdata, ConnContext *context) {
 		COtrMod *mod = static_cast<COtrMod*>(opdata);
 		assert(mod);
-		mod->PutModuleContext(context, "Gone SECURE.");
+		mod->PutModuleContext(context, "Gone SECURE. Please make sure logging is turned off "
+				"on your IRC client.");
+
+		mod->WarnIfLoggingEnabled();
 
 		assert(context->active_fingerprint);
-		if (otrl_context_is_fingerprint_trusted(context->active_fingerprint)) {
-			return;
+		if (!otrl_context_is_fingerprint_trusted(context->active_fingerprint)) {
+			char ourfp[OTRL_PRIVKEY_FPRINT_HUMAN_LEN];
+			const char *accountname = mod->GetUser()->GetUserName().c_str();
+			otrl_privkey_fingerprint(mod->m_pUserState, ourfp, accountname, PROTOCOL_ID);
+
+			mod->PutModuleContext(context, "Peer is not authenticated. There are two "
+					"ways of verifying their identity:");
+			mod->PutModuleContext(context, CString("1. Agree on a common secret (do not "
+					"type it into the chat), then type auth ") +
+					context->username + " <secret>.");
+			mod->PutModuleContext(context, CString("2. Compare their fingerprint over a "
+					"secure channel, then type trust ") +
+					context->username + ".");
+			mod->PutModuleContext(context, CString("Your fingerprint:  ") + ourfp);
+			mod->PutModuleContext(context, CString("Their fingerprint: ") +
+					HumanFingerprint(context->active_fingerprint));
 		}
 
-		char ourfp[OTRL_PRIVKEY_FPRINT_HUMAN_LEN];
-		const char *accountname = mod->GetUser()->GetUserName().c_str();
-		otrl_privkey_fingerprint(mod->m_pUserState, ourfp, accountname, PROTOCOL_ID);
-
-		mod->PutModuleContext(context, "Peer is not authenticated. "
-					"There are two ways of verifying their identity:");
-		mod->PutModuleContext(context, CString("1. Agree on a common secret (do not type "
-					"it into the chat), then type auth ") + context->username +
-					" <secret>.");
-		mod->PutModuleContext(context, CString("2. Compare their fingerprint over a secure "
-				      "channel, then type trust ") + context->username + ".");
-		mod->PutModuleContext(context, CString("Your fingerprint:  ") + ourfp);
-		mod->PutModuleContext(context, CString("Their fingerprint: ") +
-				      HumanFingerprint(context->active_fingerprint));
 	}
 
 	static void otrGoneInsecure(void *opdata, ConnContext *context) {
