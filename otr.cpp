@@ -187,15 +187,22 @@ public:
 
 		ConnContext *ctx;
 		for (ctx = m_pUserState->context_root; ctx; ctx = ctx->next) {
-			// Only show master contexts.
+			// Iterate over master contexts since only they have the fingerprint list.
 			if (ctx->m_context != ctx)
 				continue;
 
+			// Show the state for the OTRL_INSTAG_BEST context, since that's the one we
+			// send our messages to.
 			assert(ctx->username);
+			ConnContext *best_ctx = otrl_context_find(m_pUserState, ctx->username,
+					GetUser()->GetUserName().c_str(), PROTOCOL_ID,
+					OTRL_INSTAG_BEST, 0, NULL, NULL, NULL);
+			if (!best_ctx)
+				continue;
 			const char *state =
-				(ctx->msgstate == OTRL_MSGSTATE_PLAINTEXT ? "plaintext" :
-				(ctx->msgstate == OTRL_MSGSTATE_ENCRYPTED ? "encrypted" :
-				(ctx->msgstate == OTRL_MSGSTATE_FINISHED ? "finished" :
+				(best_ctx->msgstate == OTRL_MSGSTATE_PLAINTEXT ? "plaintext" :
+				(best_ctx->msgstate == OTRL_MSGSTATE_ENCRYPTED ? "encrypted" :
+				(best_ctx->msgstate == OTRL_MSGSTATE_FINISHED ? "finished" :
 					"unknown")));
 
 			Fingerprint *fp;
@@ -209,8 +216,10 @@ public:
 					trust = fp->trust;
 				}
 				table.AddRow();
-				table.SetCell("Peer", ctx->username);
-				table.SetCell("State", state);
+				if (fp == ctx->fingerprint_root.next) {
+					table.SetCell("Peer", ctx->username);
+					table.SetCell("State", state);
+				}
 				table.SetCell("Fingerprint", HumanFingerprint(fp));
 				table.SetCell("Trust", trust);
 			}
@@ -223,7 +232,7 @@ public:
 		ConnContext *ctx = otrl_context_find(m_pUserState,
 				sNick.c_str(), GetUser()->GetUserName().c_str(),
 				PROTOCOL_ID, OTRL_INSTAG_BEST,
-				0, NULL, COtrAppData::Add, NULL);
+				0, NULL, NULL, NULL);
 		if (!ctx) {
 			PutModuleBuffered("Context for nick '" + sNick + "' not found.");
 		}
@@ -539,9 +548,8 @@ public:
 
 		inject_workaround_mod = this;
 		err = otrl_message_sending(m_pUserState, &m_xOtrOps, this, accountname, PROTOCOL_ID,
-				sTarget.c_str(), OTRL_INSTAG_BEST /*FIXME*/, sMessage.c_str(),
-				NULL, &newmessage, OTRL_FRAGMENT_SEND_ALL,
-				NULL, COtrAppData::Add, NULL);
+				sTarget.c_str(), OTRL_INSTAG_BEST, sMessage.c_str(), NULL,
+				&newmessage, OTRL_FRAGMENT_SEND_ALL, NULL, COtrAppData::Add, NULL);
 		inject_workaround_mod = NULL;
 
 		if (err) {
@@ -663,7 +671,6 @@ private:
 		assert(mod);
 		assert(0 == strcmp(protocol, PROTOCOL_ID));
 		assert(mod->m_pUserState);
-		assert(!mod->m_sPrivkeyPath.empty());
 
 		CMutexLocker locker = CMutexLocker(mod->m_GenKeyMutex, true);
 		if (mod->m_GenKeyStatus == IDLE) {
@@ -1009,6 +1016,7 @@ void COtrGenKeyTimer::RunJob()
 {
 	COtrMod *mod = static_cast<COtrMod*>(m_pModule);
 	assert(mod);
+	assert(!mod->m_sPrivkeyPath.empty());
 
 	CMutexLocker locker = CMutexLocker(mod->m_GenKeyMutex, true);
 	if (mod->m_GenKeyStatus == COtrMod::DONE) {
