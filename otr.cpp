@@ -762,7 +762,7 @@ private:
 		COtrMod *mod = static_cast<COtrMod*>(opdata);
 		assert(mod);
 		mod->PutModuleContext(context, CString("Still SECURE (restarted by ") +
-				               (is_reply ? "us" : "peer") + ")."); /* XXX correct? */
+				               (is_reply ? "peer" : "us") + ").");
 	}
 
 	static int otrMaxMessageSize(void *opdata, ConnContext *context) {
