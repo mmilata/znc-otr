@@ -137,6 +137,22 @@ public:
 		return PutModuleBuffered(CString("[") + ctx->username + "] " + sLine);
 	}
 
+	enum Color {
+		Blue = 2,
+		Green = 3,
+		Red = 4,
+		Bold = 32
+	};
+
+	CString Clr(Color eClr, const CString &sWhat) {
+
+		if (eClr == Bold) {
+			return CString("\x02") + sWhat + CString("\x02");
+		} else {
+			return CString("\x03") + CString(eClr) + sWhat + CString("\x03");
+		}
+	}
+
 	static CString HumanFingerprint(Fingerprint *fprint) {
 		char human[OTRL_PRIVKEY_FPRINT_HUMAN_LEN];
 		otrl_privkey_hash_to_human(human, fprint->fingerprint);
@@ -167,15 +183,16 @@ public:
 		bool bNetworkMod = GetNetwork()->GetModules().FindModule("log");
 
 		if (bUserMod || bNetworkMod) {
-			CString sMsg = "WARNING: The log module is loaded. Type ";
+			CString sMsg = Clr(Red, "WARNING:") + " The log module is loaded. Type ";
 			if (bUserMod) {
-				sMsg += "/msg *status UnloadMod log ";
+				sMsg += Clr(Bold, "/msg *status UnloadMod log") + " ";
 				if (bNetworkMod) {
 					sMsg += "and ";
 				}
 			}
 			if (bNetworkMod) {
-				sMsg += "/msg *status UnloadMod --type=network log ";
+				sMsg += Clr(Bold, "/msg *status UnloadMod --type=network log")
+					+ " ";
 			}
 			sMsg += "to prevent ZNC from logging the conversation to disk.";
 			PutModuleBuffered(sMsg);
@@ -463,7 +480,7 @@ public:
 		m_sFPPath = GetSavePath() + "/otr.fp";
 		m_sInsTagPath = GetSavePath() + "/otr.instag";
 
-		// Load private key
+		// Load private key //XXX do not print
 		err = otrl_privkey_read(m_pUserState, m_sPrivkeyPath.c_str());
 		if (err == GPG_ERR_NO_ERROR) {
 			PutModuleBuffered("Private keys loaded from " + m_sPrivkeyPath + ".");
@@ -526,9 +543,10 @@ public:
 		// We should check if we are the only administrator but the user map may not be
 		// fully populated at this time.
 		if (!GetUser()->IsAdmin()) {
-			PutModuleBuffered("WARNING: You are not a ZNC admin. The ZNC administrator "
-					"has access to your private keys which can be used to read "
-					"your encrypted messages and to impersonate you.");
+			PutModuleBuffered(Clr(Red, "WARNING:") + " You are not a ZNC admin. "
+					"The ZNC administrator has access to your private keys "
+					"which can be used to read your encrypted messages and to "
+					"impersonate you.");
 			PutModuleBuffered("Do you trust their good intentions and the ability to "
 					"protect your data from other people?");
 		}
@@ -641,8 +659,9 @@ public:
 
 		if (ctx && otrl_tlv_find(tlvs, OTRL_TLV_DISCONNECTED)) {
 			PutModuleContext(ctx, "Peer has finished the conversation. "
-					"Use the Finish command to enter plaintext mode, "
-					"or send ?OTR? to start new OTR session.");
+					"Type " + Clr(Bold, "finish " + Nick.GetNick()) +
+					" to enter plaintext mode, or send ?OTR? to start "
+					"new OTR session.");
 		}
 		if (tlvs) {
 			otrl_tlv_free(tlvs);
@@ -768,28 +787,30 @@ private:
 	static void otrGoneSecure(void *opdata, ConnContext *context) {
 		COtrMod *mod = static_cast<COtrMod*>(opdata);
 		assert(mod);
-		mod->PutModuleContext(context, "Gone SECURE. Please make sure logging is turned off "
-				"on your IRC client.");
+		mod->PutModuleContext(context, "Gone " + mod->Clr(Bold, "SECURE") + ". Please "
+				"make sure logging is turned off on your IRC client.");
 
 		mod->WarnIfLoggingEnabled();
 
 		assert(context->active_fingerprint);
 		if (!otrl_context_is_fingerprint_trusted(context->active_fingerprint)) {
-			char ourfp[OTRL_PRIVKEY_FPRINT_HUMAN_LEN];
-			const char *accountname = mod->GetUser()->GetUserName().c_str();
-			otrl_privkey_fingerprint(mod->m_pUserState, ourfp, accountname, PROTOCOL_ID);
-
 			mod->PutModuleContext(context, "Peer is not authenticated. There are two "
 					"ways of verifying their identity:");
-			mod->PutModuleContext(context, CString("1. Agree on a common secret (do not "
-					"type it into the chat), then type auth ") +
-					context->username + " <secret>.");
-			mod->PutModuleContext(context, CString("2. Compare their fingerprint over a "
-					"secure channel, then type trust ") +
-					context->username + ".");
-			mod->PutModuleContext(context, CString("Your fingerprint:  ") + ourfp);
-			mod->PutModuleContext(context, CString("Their fingerprint: ") +
-					HumanFingerprint(context->active_fingerprint));
+			mod->PutModuleContext(context, "1. Agree on a common secret (do not type "
+					"it into the chat), then type " +
+					mod->Clr(Bold, CString("auth ") + context->username +
+						" <secret>") +
+					".");
+			mod->PutModuleContext(context, "2. Compare their fingerprint over a "
+					"secure channel, then type " +
+					mod->Clr(Bold, CString("trust ") + context->username) +
+					".");
+			mod->PutModuleContext(context, "Your fingerprint:  " +
+					mod->Clr(Bold, mod->OurFingerprint()));
+			mod->PutModuleContext(context, "Their fingerprint: " +
+					mod->Clr(Bold,
+						HumanFingerprint(context->active_fingerprint)
+					));
 		}
 
 	}
@@ -798,14 +819,14 @@ private:
 		/* This callback doesn't seem to be used by libotr-4.0.0. */
 		COtrMod *mod = static_cast<COtrMod*>(opdata);
 		assert(mod);
-		mod->PutModuleContext(context, "Gone INSECURE.");
+		mod->PutModuleContext(context, "Gone " + mod->Clr(Bold, "INSECURE") + ".");
 	}
 
 	static void otrStillSecure(void *opdata, ConnContext *context, int is_reply) {
 		COtrMod *mod = static_cast<COtrMod*>(opdata);
 		assert(mod);
-		mod->PutModuleContext(context, CString("Still SECURE (restarted by ") +
-				               (is_reply ? "peer" : "us") + ").");
+		mod->PutModuleContext(context, "Still " + mod->Clr(Bold, "SECURE") +
+				" (restarted by " + (is_reply ? "peer" : "us") + ").");
 	}
 
 	static int otrMaxMessageSize(void *opdata, ConnContext *context) {
