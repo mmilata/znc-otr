@@ -143,6 +143,15 @@ public:
 		return CString(human);
 	}
 
+	CString OurFingerprint() {
+		char ourfp[OTRL_PRIVKEY_FPRINT_HUMAN_LEN];
+		const char *accountname = GetUser()->GetUserName().c_str();
+		if (otrl_privkey_fingerprint(m_pUserState, ourfp, accountname, PROTOCOL_ID)) {
+			return CString(ourfp);
+		}
+		return CString("ERROR");
+	}
+
 	void WriteFingerprints() {
 		gcry_error_t err;
 		err = otrl_privkey_write_fingerprints(m_pUserState, m_sFPPath.c_str());
@@ -229,6 +238,7 @@ public:
 			}
 		}
 		PutModule(table);
+		PutModule("Your fingerprint: " + OurFingerprint());
 	}
 
 	ConnContext* GetContextFromArg(const CString& sLine, bool bWarnIfNotFound = true) {
