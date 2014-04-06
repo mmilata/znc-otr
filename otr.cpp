@@ -182,12 +182,7 @@ public:
 		}
 	}
 
-	void CmdContexts(const CString& sLine) {
-		if (!m_pUserState->context_root) {
-			PutModule("No contexts available.");
-			return;
-		}
-
+	void CmdInfo(const CString& sLine) {
 		CTable table;
 		table.AddColumn("Peer");
 		table.AddColumn("State");
@@ -237,8 +232,13 @@ public:
 				}
 			}
 		}
-		PutModule(table);
-		PutModule("Your fingerprint: " + OurFingerprint());
+		if (m_pUserState->context_root) {
+			PutModule(table);
+		} else {
+			PutModule("No fingerprints available.");
+		}
+
+		PutModule("Your fingerprint: " + OurFingerprint() + ".");
 	}
 
 	ConnContext* GetContextFromArg(const CString& sLine, bool bWarnIfNotFound = true) {
@@ -499,9 +499,9 @@ public:
 
 		// Initialize commands
 		AddHelpCommand();
-		AddCommand("Contexts", static_cast<CModCommand::ModCmdFunc>(&COtrMod::CmdContexts),
+		AddCommand("Info", static_cast<CModCommand::ModCmdFunc>(&COtrMod::CmdInfo),
 				"",
-				"List OTR contexts.");
+				"List known fingerprints");
 		AddCommand("Trust", static_cast<CModCommand::ModCmdFunc>(&COtrMod::CmdTrust),
 				"<nick|fingerprint>",
 				"Mark the user's fingerprint as trusted after veryfing it over "
