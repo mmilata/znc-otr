@@ -519,12 +519,13 @@ public:
 		m_sFPPath = GetSavePath() + "/otr.fp";
 		m_sInsTagPath = GetSavePath() + "/otr.instag";
 
-		// Load private key //XXX do not print
+		// Load private key
 		err = otrl_privkey_read(m_pUserState, m_sPrivkeyPath.c_str());
 		if (err == GPG_ERR_NO_ERROR) {
-			PutModuleBuffered("Private keys loaded from " + m_sPrivkeyPath + ".");
+			//PutModuleBuffered("Private keys loaded from " + m_sPrivkeyPath + ".");
 		} else if (err == gcry_error_from_errno(ENOENT)) {
-			PutModuleBuffered("No private key found.");
+			PutModuleBuffered("No private key found. Type " + Clr(Bold, "genkey") +
+					" to generate new one.");
 		} else {
 			sMessage = (CString("Failed to load private key: ") + gcry_strerror(err) + ".");
 			return false;
@@ -534,9 +535,9 @@ public:
 		err = otrl_privkey_read_fingerprints(m_pUserState, m_sFPPath.c_str(),
 				COtrAppData::Add, NULL);
 		if (err == GPG_ERR_NO_ERROR) {
-			PutModuleBuffered("Fingerprints loaded from " + m_sFPPath + ".");
+			//PutModuleBuffered("Fingerprints loaded from " + m_sFPPath + ".");
 		} else if (err == gcry_error_from_errno(ENOENT)) {
-			PutModuleBuffered("No fingerprint file found.");
+			//PutModuleBuffered("No fingerprint file found.");
 		} else {
 			sMessage = (CString("Failed to load fingerprints: ") + gcry_strerror(err) + ".");
 			return false;
@@ -545,9 +546,9 @@ public:
 		//  Load instance tags
 		err = otrl_instag_read(m_pUserState, m_sInsTagPath.c_str());
 		if (err == GPG_ERR_NO_ERROR) {
-			PutModuleBuffered("Instance tags loaded from " + m_sInsTagPath + ".");
+			//PutModuleBuffered("Instance tags loaded from " + m_sInsTagPath + ".");
 		} else if (err == gcry_error_from_errno(ENOENT)) {
-			PutModuleBuffered("No instance tag file found.");
+			//PutModuleBuffered("No instance tag file found.");
 		} else {
 			sMessage = (CString("Failed to load instance tags: ") + gcry_strerror(err) + ".");
 			return false;
