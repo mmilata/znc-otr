@@ -199,6 +199,39 @@ public:
 		}
 	}
 
+
+	void GenerateKey(bool bOverwrite=false) {
+		assert(m_pUserState);
+		const char *accountname = GetUser()->GetUserName().c_str();
+
+		if (!bOverwrite && otrl_privkey_find(m_pUserState, accountname, PROTOCOL_ID)) {
+			PutModuleBuffered("Private key already exists. Use " +
+					Clr(Bold, "genkey --overwrite") +
+					" to overwrite the old one.");
+			return;
+		}
+
+		CMutexLocker locker = CMutexLocker(m_GenKeyMutex, true);
+		if (m_GenKeyStatus == IDLE) {
+			gcry_error_t err;
+			err = otrl_privkey_generate_start(m_pUserState, accountname, PROTOCOL_ID,
+					&m_NewKey);
+			if (err)
+			{
+				PutModuleBuffered(CString("Key generation failed: ") +
+						gcry_strerror(err));
+				return;
+			}
+
+			PutModuleBuffered("Starting key generation in a background thread.");
+			m_GenKeyStatus = RUNNING;
+			CThread::startThread(GenKeyThreadFunc, static_cast<void*>(this));
+			AddTimer(new COtrGenKeyTimer(this));
+		} else {
+			PutModuleBuffered("Key generation is already running.");
+		}
+	}
+
 	void CmdInfo(const CString& sLine) {
 		CTable table;
 		table.AddColumn("Peer");
@@ -454,6 +487,11 @@ public:
 		PutModuleContext(ctx, "Authentication aborted.");
 	}
 
+	void CmdGenKey(const CString& sLine) {
+		bool bOverwrite = sLine.Token(1).Equals("--overwrite");
+		GenerateKey(bOverwrite);
+	}
+
 	virtual bool OnLoad(const CString& sArgs, CString& sMessage) {
 		// Initialize libgcrypt for multithreaded usage
 		gcry_error_t err;
@@ -475,6 +513,7 @@ public:
 		// Initialize userstate
 		m_pUserState = otrl_userstate_create();
 		m_GenKeyMutex = CMutex(); //FIXME: does this need to be here?
+		m_GenKeyStatus = IDLE;
 
 		m_sPrivkeyPath = GetSavePath() + "/otr.key";
 		m_sFPPath = GetSavePath() + "/otr.fp";
@@ -538,6 +577,9 @@ public:
 		AddCommand("AuthAbort", static_cast<CModCommand::ModCmdFunc>(&COtrMod::CmdAuthAbort),
 				"<nick>",
 				"Abort authentication with peer.");
+		AddCommand("GenKey", static_cast<CModCommand::ModCmdFunc>(&COtrMod::CmdGenKey),
+				"[--overwrite]",
+				"Generate new private key.");
 
 		// Warn if we are not an administrator
 		// We should check if we are the only administrator but the user map may not be
@@ -725,29 +767,10 @@ private:
 		COtrMod *mod = static_cast<COtrMod*>(opdata);
 		assert(mod);
 		assert(0 == strcmp(protocol, PROTOCOL_ID));
-		assert(mod->m_pUserState);
 
-		CMutexLocker locker = CMutexLocker(mod->m_GenKeyMutex, true);
-		if (mod->m_GenKeyStatus == IDLE) {
-			gcry_error_t err;
-			err = otrl_privkey_generate_start(mod->m_pUserState, accountname, protocol,
-					&(mod->m_NewKey));
-			if (err)
-			{
-				mod->PutModuleBuffered(CString("Key generation failed: ") +
-						gcry_strerror(err));
-				return;
-			}
-
-			mod->PutModuleBuffered("Starting key generation in a background thread.");
-			mod->m_GenKeyStatus = RUNNING;
-			CThread::startThread(GenKeyThreadFunc, static_cast<void*>(mod));
-			mod->AddTimer(new COtrGenKeyTimer(mod));
-		} else {
-			mod->PutModuleBuffered(CString("Tried to generate a key for ") + accountname +
-					" while another key generation is in progress. "
-					"Please try again once the first key generation is finished.");
-		}
+		mod->PutModuleBuffered("Someone wants to start an OTR session but you don't have a "
+				"key available.");
+		mod->GenerateKey();
 	}
 
 	static int otrIsLoggedIn(void *opdata, const char *accountname, const char *protocol,
