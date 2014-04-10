@@ -106,6 +106,7 @@ private:
 	CString m_sFPPath;
 	CString m_sInsTagPath;
 	list<CString> m_Buffer;
+	VCString m_vsIgnored;
 
 	CMutex m_GenKeyMutex;
 	// following members are protected by the mutex
@@ -492,6 +493,74 @@ public:
 		GenerateKey(bOverwrite);
 	}
 
+	void SaveIgnores() {
+		CString sFlat = "";
+		bool bFirst = true;
+
+		for (VCString::const_iterator it = m_vsIgnored.begin();
+				it != m_vsIgnored.end();
+				it++) {
+			if (bFirst) {
+				bFirst = false;
+			} else {
+				sFlat += " ";
+			}
+			sFlat += *it;
+		}
+		SetNV("ignore", sFlat, true);
+	}
+
+	bool IsIgnored(const CString& sNick) {
+		for (VCString::const_iterator it = m_vsIgnored.begin();
+				it != m_vsIgnored.end();
+				it++) {
+			if (sNick.WildCmp(*it)) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	void CmdIgnore(const CString& sLine) {
+		if (sLine.Token(1).Equals("")) {
+			PutModuleBuffered("OTR is disabled for following nicks:");
+			for (VCString::const_iterator it = m_vsIgnored.begin();
+					it != m_vsIgnored.end();
+					it++) {
+				PutModuleBuffered(*it);
+			}
+		} else if (sLine.Token(1).Equals("--remove")) {
+			CString sNick = sLine.Token(2);
+			if (sNick.Equals("")) {
+				PutModuleBuffered("Usage: ignore --remove nick");
+				return;
+			}
+
+			bool bFound = false;
+			for (VCString::iterator it = m_vsIgnored.begin();
+					it != m_vsIgnored.end();
+					it++) {
+				if (it->Equals(sNick)) {
+					m_vsIgnored.erase(it);
+					bFound = true;
+					break;
+				}
+			}
+
+			if (bFound) {
+				SaveIgnores();
+				PutModuleBuffered("Removed " + Clr(Bold, sNick) + " from OTR ignore list.");
+			} else {
+				PutModuleBuffered("Not on OTR ignore list: " + sNick);
+			}
+		} else {
+			CString sNick = sLine.Token(1);
+			m_vsIgnored.push_back(sNick);
+			SaveIgnores();
+			PutModuleBuffered("Added " + Clr(Bold, sNick) + " to OTR ignore list.");
+		}
+	}
+
 	virtual bool OnLoad(const CString& sArgs, CString& sMessage) {
 		// Initialize libgcrypt for multithreaded usage
 		gcry_error_t err;
@@ -578,9 +647,16 @@ public:
 		AddCommand("AuthAbort", static_cast<CModCommand::ModCmdFunc>(&COtrMod::CmdAuthAbort),
 				"<nick>",
 				"Abort authentication with peer.");
+		AddCommand("Ignore", static_cast<CModCommand::ModCmdFunc>(&COtrMod::CmdIgnore),
+				"[--remove] [nick]",
+				"Manage list of nicks excluded from OTR encryption. "
+				"Accepts wildcards.");
 		AddCommand("GenKey", static_cast<CModCommand::ModCmdFunc>(&COtrMod::CmdGenKey),
 				"[--overwrite]",
 				"Generate new private key.");
+
+		// Load list of ignored nicks
+		GetNV("ignore").Split(" ", m_vsIgnored, false);
 
 		// Warn if we are not an administrator
 		// We should check if we are the only administrator but the user map may not be
@@ -666,7 +742,7 @@ public:
 
 	virtual EModRet OnUserMsg(CString& sTarget, CString& sMessage) {
 		// Do not pass the message to libotr if sTarget is a channel
-		if (TargetIsChan(sTarget)) {
+		if (TargetIsChan(sTarget) || IsIgnored(sTarget)) {
 			return CONTINUE;
 		}
 
@@ -674,7 +750,7 @@ public:
 	}
 
 	virtual EModRet OnUserAction(CString& sTarget, CString& sMessage) {
-		if (TargetIsChan(sTarget)) {
+		if (TargetIsChan(sTarget) || IsIgnored(sTarget)) {
 			return CONTINUE;
 		}
 
@@ -694,6 +770,11 @@ public:
 		char *newmessage = NULL;
 		OtrlTLV *tlvs = NULL;
 		ConnContext *ctx = NULL;
+
+		if (IsIgnored(Nick.GetNick())) {
+			return CONTINUE;
+		}
+
 		const char *accountname = GetUser()->GetUserName().c_str();
 		res = otrl_message_receiving(m_pUserState, &m_xOtrOps, this, accountname,
 				PROTOCOL_ID, Nick.GetNick().c_str() /* @server? */,

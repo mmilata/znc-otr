@@ -1,5 +1,3 @@
-= otr =
-
 This module allows you to encrypt private conversations using the
 [https://otr.cypherpunks.ca/ OTR protocol]. Several popular
 [https://otr.cypherpunks.ca/software.php IRC clients] support OTR (usually requiring a plugin).
@@ -57,7 +55,7 @@ Shows the table of known fingerprints. The table has five columns:
 
 Example:
 <pre>
-<alice> info
+/msg *otr info
 <*otr> +-------+-----------+----------------------------------------------+-----+---------------+
 <*otr> | Peer  | State     | Fingerprint                                  | Act | Trust         |
 <*otr> +-------+-----------+----------------------------------------------+-----+---------------+
@@ -85,9 +83,9 @@ phone, in person) that it is indeed the fingerprint used by your peer.
 
 Example:
 <pre>
-<alice> trust bob
+/msg *otr trust bob
 <*otr> [bob] Fingerprint 94A1353B 60A58E73 82CE8999 CBBD7B92 5E9EBB87 trusted!
-<alice> trust 378A8445 3FC3933C 73C917C8 BFE4C18B 5CE65CFC
+/msg *otr trust 378A8445 3FC3933C 73C917C8 BFE4C18B 5CE65CFC
 <*otr> [carol] Fingerprint 378A8445 3FC3933C 73C917C8 BFE4C18B 5CE65CFC trusted!
 </pre>
 
@@ -110,14 +108,14 @@ disclosing it to each other.
 
 This command is also used to reply to authentication requests started by the other side.
 
-Example:
+Example (you are alice):
 <pre>
 <alice> Let's authenticate with the answer to following question: what is my favorite book?
 <alice> No capitals or punctuation.
 <bob> OK.
 </pre>
 <pre>
-<alice> auth bob the old man and the sea
+/msg *otr auth bob the old man and the sea
 <*otr> [bob] Initiated authentication.
 (bob now does something similar in his client)
 <*otr> [bob] Peer replied to authentication request.
@@ -136,7 +134,7 @@ clients that support OTRv3.
 
 Example:
 <pre>
-<alice> authq bob [What is my favorite book (no caps)?] the old man and the sea
+/msg *otr authq bob [What is my favorite book (no caps)?] the old man and the sea
 <*otr> [bob] Initiated authentication.
 (bob's client displays the question and he types the answer)
 <*otr> [bob] Peer replied to authentication request.
@@ -152,6 +150,28 @@ key is automatically generated the first time it is needed.
 
 Use with the '''--overwrite''' parameter to throw away the old key and generate
 a new one.
+
+==== ignore [--remove] [nick] ====
+This command is used to maintain list of nicks for which all OTR functionality is disabled.
+Wildcards can be used to match multiple nicks.
+
+Useful when the other side does not like the whitespace OTR advertisements (e.g. NickServ on
+freenode) or when their OTR plugin is broken and causes crashes.
+
+Example:
+<pre>
+/msg *otr ignore
+<*otr> OTR is disabled for following nicks:
+<*otr> carol
+<*otr> elvis
+/msg *otr ignore Guest*
+<*otr> Added Guest* to OTR ignore list.
+/msg *otr ignore --remove carol
+<*otr> Removed carol from OTR ignore list
+/msg *otr ignore
+<*otr> elvis
+<*otr> Guest*
+</pre>
 
 == Security considerations ==
 * In most cases it is best not to use this ZNC module and use OTR directly on the client you use to connect to the bouncer instead. This way you don't have to rely on the security of the server, which might be difficult to achieve.
