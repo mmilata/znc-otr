@@ -107,6 +107,7 @@ private:
 	CString m_sInsTagPath;
 	list<CString> m_Buffer;
 	VCString m_vsIgnored;
+	COtrTimer *m_pOtrTimer;
 
 	CMutex m_GenKeyMutex;
 	// following members are protected by the mutex
@@ -583,6 +584,8 @@ public:
 		m_pUserState = otrl_userstate_create();
 		m_GenKeyMutex = CMutex(); //FIXME: does this need to be here?
 		m_GenKeyStatus = IDLE;
+
+		m_pOtrTimer = NULL;
 
 		m_sPrivkeyPath = GetSavePath() + "/otr.key";
 		m_sFPPath = GetSavePath() + "/otr.fp";
@@ -1098,27 +1101,27 @@ private:
 		COtrMod *mod = static_cast<COtrMod*>(opdata);
 		assert(mod);
 
-		CTimer *pTimer = mod->FindTimer("OtrTimer");
-
-		if (pTimer) {
+		if (mod->m_pOtrTimer) {
 			if (interval > 0) {
 				// Change the timer interval
-				pTimer->Start(interval);
+				mod->m_pOtrTimer->Start(interval);
 			} else {
 				// Mark the timer for deletion - we can't directly remove it because
 				// this callback can be invoked from the timer's RunJob method
-				pTimer->Stop();
-				// Remove it from the set of module's timers so that we don't try to
-				// start it again (it wouldn't work)
-				mod->UnlinkTimer(pTimer);
+				mod->m_pOtrTimer->Stop();
+				mod->m_pOtrTimer = NULL;
 			}
 		} else {
 			if (interval > 0) {
 				// Create new timer
-				mod->AddTimer(new COtrTimer(mod, interval));
+				mod->m_pOtrTimer = new COtrTimer(mod, interval);
+				if(!mod->AddTimer(mod->m_pOtrTimer)) {
+					mod->PutModuleBuffered("Error: failed to create timer, "
+							"forward secrecy not guaranteed.");
+				}
 			} else {
 				// Should never happen?
-				mod->PutModuleBuffered("Error: trying to delete nonexistent timer");
+				mod->PutModuleBuffered("Error: trying to delete nonexistent timer.");
 			}
 		}
 	}
