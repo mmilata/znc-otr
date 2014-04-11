@@ -9,9 +9,10 @@ For more information about OTR, see https://otr.cypherpunks.ca/ and https://otr.
 The module source is available at https://github.com/mmilata/znc-otr. You can
 download a
 [https://github.com/mmilata/znc-otr/archive/master/znc-otr-master.tar.gz tarball]
-directly if you don't want to use git. Once you have the source code,
-follow the instructions for [http://wiki.znc.in/Compiling_modules compiling]
-and [http://wiki.znc.in/Modules#.28Un.29Loading_Modules loading ZNC modules].
+directly if you don't want to use git. Once you have the source code, install the module
+by running ''make'' and ''make install'' in znc-otr's directory. See
+[http://wiki.znc.in/Modules#.28Un.29Loading_Modules Loading modules] for instructions
+for loading the module.
 
 If your ZNC is running on a virtual server (see
 [[#Security considerations|security considerations]]) it is recommended
