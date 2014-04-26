@@ -1018,70 +1018,77 @@ private:
 		}
 	}
 
-	static void otrHandleMsgEvent(void *opdata, OtrlMessageEvent msg_event, ConnContext *context,
+	static void otrHandleMsgEvent(void *opdata, OtrlMessageEvent msg_event, ConnContext *ctx,
 			const char *message, gcry_error_t err) {
 		COtrMod *mod = static_cast<COtrMod*>(opdata);
 		assert(mod);
 
+		CString sTo = mod->GetNetwork()->GetCurNick();
+		CString sWarn = "[" + mod->Clr(Red, "NOT ENCRYPTED") + "]";
+
 		switch (msg_event) {
 		case OTRL_MSGEVENT_ENCRYPTION_REQUIRED:
-			mod->PutModuleContext(context, "Our policy requires encryption but we are trying "
+			mod->PutModuleContext(ctx, "Our policy requires encryption but we are trying "
 					"to send an unencrypted message out.");
 			break;
 		case OTRL_MSGEVENT_ENCRYPTION_ERROR:
-			mod->PutModuleContext(context, "An error occured while encrypting a message and "
+			mod->PutModuleContext(ctx, "An error occured while encrypting a message and "
 					"the message was not sent.");
 			break;
 		case OTRL_MSGEVENT_CONNECTION_ENDED:
-			mod->PutModuleContext(context, "Message has not been sent because our peer has "
+			mod->PutModuleContext(ctx, "Message has not been sent because our peer has "
 					"ended the private conversation. You should either close the "
-					"connection, or refresh it.");
+					"connection (by typing " +
+					mod->Clr(Bold, CString("finish ") + ctx->username) + "), " +
+					"or restart it by sending them " + mod->Clr(Bold, "?OTR?") +
+					".");
 			break;
 		case OTRL_MSGEVENT_SETUP_ERROR:
-			mod->PutModuleContext(context,
+			mod->PutModuleContext(ctx,
 					CString("A private conversation could not be set up: ") +
 					gcry_strerror(err));
 			break;
 		case OTRL_MSGEVENT_MSG_REFLECTED:
-			mod->PutModuleContext(context, "Received our own OTR messages.");
+			mod->PutModuleContext(ctx, "Received our own OTR messages.");
 			break;
 		case OTRL_MSGEVENT_MSG_RESENT:
-			mod->PutModuleContext(context, "The previous message was resent.");
+			mod->PutModuleContext(ctx, "The previous message was resent.");
 			break;
 		case OTRL_MSGEVENT_RCVDMSG_NOT_IN_PRIVATE:
-			mod->PutModuleContext(context, "Received an encrypted message but cannot read it "
+			mod->PutModuleContext(ctx, "Received an encrypted message but cannot read it "
 					"because no private connection is established yet.");
 			break;
 		case OTRL_MSGEVENT_RCVDMSG_UNREADABLE:
-			mod->PutModuleContext(context, "Cannot read the received message.");
+			mod->PutModuleContext(ctx, "Cannot read the received message.");
 			break;
 		case OTRL_MSGEVENT_RCVDMSG_MALFORMED:
-			mod->PutModuleContext(context, "The message received contains malformed data.");
+			mod->PutModuleContext(ctx, "The message received contains malformed data.");
 			break;
 		case OTRL_MSGEVENT_LOG_HEARTBEAT_RCVD:
-			mod->PutModuleContext(context, "Received a heartbeat.");
+			// mod->PutModuleContext(ctx, "Received a heartbeat.");
 			break;
 		case OTRL_MSGEVENT_LOG_HEARTBEAT_SENT:
-			mod->PutModuleContext(context, "Sent a heartbeat.");
+			// mod->PutModuleContext(ctx, "Sent a heartbeat.");
 			break;
 		case OTRL_MSGEVENT_RCVDMSG_GENERAL_ERR:
-			mod->PutModuleContext(context, CString("Received a general OTR error: ") + message);
+			mod->PutModuleContext(ctx, CString("Received a general OTR error: ") + message);
 			break;
 		case OTRL_MSGEVENT_RCVDMSG_UNENCRYPTED:
-			//TODO: send the message to the client
-			mod->PutModuleContext(context, CString("Received an unencrypted message: ") +
+			mod->PutModuleContext(ctx, CString("Received an unencrypted message: ") +
 					message);
+			mod->PutUser(CString(":") + ctx->username + " PRIVMSG " + sTo +
+						" :" + sWarn + " " + message);
 			break;
 		case OTRL_MSGEVENT_RCVDMSG_UNRECOGNIZED:
-			mod->PutModuleContext(context, "Cannot recognize the type of OTR message "
+			mod->PutModuleContext(ctx, "Cannot recognize the type of OTR message "
 					"received.");
 			break;
 		case OTRL_MSGEVENT_RCVDMSG_FOR_OTHER_INSTANCE:
-			mod->PutModuleContext(context, "Received and discarded a message intended for "
+			mod->PutModuleContext(ctx, "Received and discarded a message intended for "
 					"another instance.");
 			break;
 		default:
-			mod->PutModuleContext(context, "Unknown message event.");
+			mod->PutModuleContext(ctx, "Unknown message event.");
 			break;
 		}
 	}
