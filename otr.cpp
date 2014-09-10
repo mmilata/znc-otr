@@ -369,7 +369,7 @@ public:
 	}
 
 	ConnContext* GetContextFromArg(const CString& sLine, bool bWarnIfNotFound = true) {
-		CString sNick = sLine.Token(1);
+		CString sNick = sLine.Token(1).MakeLower();
 		ConnContext *ctx = otrl_context_find(m_pUserState,
 				sNick.c_str(), GetUser()->GetUserName().c_str(),
 				PROTOCOL_ID, OTRL_INSTAG_BEST,
@@ -587,10 +587,12 @@ public:
 	}
 
 	bool IsIgnored(const CString& sNick) {
+		CString sNickLower = sNick.AsLower();
+
 		for (VCString::const_iterator it = m_vsIgnored.begin();
 				it != m_vsIgnored.end();
 				it++) {
-			if (sNick.WildCmp(*it)) {
+			if (sNickLower.WildCmp(*it)) {
 				return true;
 			}
 		}
@@ -630,7 +632,7 @@ public:
 				PutModuleBuffered("Not on OTR ignore list: " + sNick);
 			}
 		} else {
-			CString sNick = sLine.Token(1);
+			CString sNick = sLine.Token(1).MakeLower();
 			m_vsIgnored.push_back(sNick);
 			SaveIgnores();
 			PutModuleBuffered("Added " + Clr(Bold, sNick) + " to OTR ignore list.");
@@ -804,10 +806,11 @@ public:
 		gcry_error_t err;
 		char *newmessage = NULL;
 		const char *accountname = GetUser()->GetUserName().c_str();
+		CString sNick = sTarget.AsLower();
 
 		inject_workaround_mod = this;
 		err = otrl_message_sending(m_pUserState, &m_xOtrOps, this, accountname, PROTOCOL_ID,
-				sTarget.c_str(), OTRL_INSTAG_BEST, sMessage.c_str(), NULL,
+				sNick.c_str(), OTRL_INSTAG_BEST, sMessage.c_str(), NULL,
 				&newmessage, OTRL_FRAGMENT_SEND_ALL, NULL, COtrAppData::Add, NULL);
 		inject_workaround_mod = NULL;
 
@@ -856,6 +859,7 @@ public:
 		char *newmessage = NULL;
 		OtrlTLV *tlvs = NULL;
 		ConnContext *ctx = NULL;
+		CString sNick = Nick.GetNick().AsLower();
 
 		if (IsIgnored(Nick.GetNick())) {
 			return CONTINUE;
@@ -863,7 +867,7 @@ public:
 
 		const char *accountname = GetUser()->GetUserName().c_str();
 		res = otrl_message_receiving(m_pUserState, &m_xOtrOps, this, accountname,
-				PROTOCOL_ID, Nick.GetNick().c_str() /* @server? */,
+				PROTOCOL_ID, sNick.c_str(),
 				sMessage.c_str(), &newmessage, &tlvs, &ctx,
 				COtrAppData::Add, NULL);
 
