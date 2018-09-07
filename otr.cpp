@@ -120,9 +120,9 @@ class COtrMod : public CModule {
 
     static CString Clr(Color eClr, const CString& sWhat) {
         if (eClr == Bold) {
-            return "\x02" + sWhat + "\x02";
+            return CString("\x02") + sWhat + "\x02";
         } else {
-            return "\x03" + eClr + sWhat + "\x03";
+            return CString("\x03") + (char)eClr + sWhat + "\x03";
         }
     }
 
