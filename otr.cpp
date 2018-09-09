@@ -87,6 +87,7 @@ class COtrMod : public CModule {
     CString m_sFPPath;
     CString m_sInsTagPath;
     list<CString> m_Buffer;
+    VCString m_vsEnabled;
     VCString m_vsIgnored;
     COtrTimer* m_pOtrTimer;
 
@@ -504,10 +505,28 @@ class COtrMod : public CModule {
     void SaveIgnores() {
         CString sFlat = CString(" ").Join(m_vsIgnored.begin(), m_vsIgnored.end());
         SetNV("ignore", sFlat, true);
+        if (m_vsEnabled.empty()) {
+            // A single space to avoid the default getting restored
+            sFlat = CString(" ");
+        } else {
+            sFlat = CString(" ").Join(m_vsEnabled.begin(), m_vsEnabled.end());
+        }
+        SetNV("enable", sFlat, true);
     }
 
     bool IsIgnored(const CString& sNick) {
         CString sNickLower = sNick.AsLower();
+
+        bool bEnabled = false;
+        for (const CString& s : m_vsEnabled) {
+            if (sNickLower.WildCmp(s)) {
+                bEnabled = true;
+                break;
+            }
+        }
+        if (!bEnabled) {
+            return true;
+        }
 
         for (const CString& s : m_vsIgnored) {
             if (sNickLower.WildCmp(s)) {
@@ -518,23 +537,32 @@ class COtrMod : public CModule {
     }
 
     void CmdIgnore(const CString& sLine) {
+        CString sEnDis;
+        VCString *pList;
+        if (sLine.Token(0) == "ignore") {
+            sEnDis = "disabled";
+            pList = &m_vsIgnored;
+        } else {
+            sEnDis = "enabled";
+            pList = &m_vsEnabled;
+        }
         if (sLine.Token(1).empty()) {
-            PutModuleBuffered("OTR is disabled for following nicks:");
-            for (const CString& s : m_vsIgnored) {
+            PutModuleBuffered(CString("OTR is ") + sEnDis + " for following nicks:");
+            for (const CString& s : *pList) {
                 PutModuleBuffered(s);
             }
         } else if (sLine.Token(1).Equals("--remove")) {
             CString sNick = sLine.Token(2);
             if (sNick.empty()) {
-                PutModuleBuffered("Usage: ignore --remove nick");
+                PutModuleBuffered("Usage: " + sLine.Token(0) + " --remove nick");
                 return;
             }
 
             bool bFound = false;
-            for (VCString::iterator it = m_vsIgnored.begin(); //range-based for
-                 it != m_vsIgnored.end(); it++) {
+            for (VCString::iterator it = pList->begin(); //range-based for
+                 it != pList->end(); it++) {
                 if (it->Equals(sNick)) {
-                    m_vsIgnored.erase(it);
+                    pList->erase(it);
                     bFound = true;
                     break;
                 }
@@ -543,16 +571,16 @@ class COtrMod : public CModule {
             if (bFound) {
                 SaveIgnores();
                 PutModuleBuffered("Removed " + Clr(Bold, sNick) +
-                                  " from OTR ignore list.");
+                                  " from OTR " + sLine.Token(0) + " list.");
             } else {
-                PutModuleBuffered("Not on OTR ignore list: " + sNick);
+                PutModuleBuffered("Not on OTR " + sLine.Token(0) + " list: " + sNick);
             }
         } else {
             CString sNick = sLine.Token(1).MakeLower();
-            m_vsIgnored.push_back(sNick);
+            pList->push_back(sNick);
             SaveIgnores();
             PutModuleBuffered("Added " + Clr(Bold, sNick) +
-                              " to OTR ignore list.");
+                              " to OTR " + sLine.Token(0) + " list.");
         }
     }
 
@@ -650,6 +678,11 @@ class COtrMod : public CModule {
         AddCommand("AuthAbort",
                    static_cast<CModCommand::ModCmdFunc>(&COtrMod::CmdAuthAbort),
                    "<nick>", "Abort authentication with peer.");
+        AddCommand("Enable",
+                   static_cast<CModCommand::ModCmdFunc>(&COtrMod::CmdIgnore),
+                   "[--remove] [nick]",
+                   "Manage list of nicks enabled for OTR encryption. "
+                   "Accepts wildcards.");
         AddCommand("Ignore",
                    static_cast<CModCommand::ModCmdFunc>(&COtrMod::CmdIgnore),
                    "[--remove] [nick]",
@@ -660,6 +693,12 @@ class COtrMod : public CModule {
                    "[--really|--overwrite]", "Generate new private key.");
 
         // Load list of ignored nicks
+        CString enabled_nicks = GetNV("enable");
+        if (enabled_nicks.empty()) {
+            // Default to enabled for all nicks
+            enabled_nicks = "*";
+        }
+        enabled_nicks.Split(" ", m_vsEnabled, false);
         GetNV("ignore").Split(" ", m_vsIgnored, false);
 
         // Warn if we are not an administrator - we should check if we are the
