@@ -39,6 +39,7 @@ GCRY_THREAD_OPTION_PTHREAD_IMPL;
 #include <cstring>
 #include <iostream>
 #include <list>
+#include <regex>
 
 using std::list;
 
@@ -725,32 +726,27 @@ class COtrMod : public CModule {
         if (m_pUserState) otrl_userstate_free(m_pUserState);
     }
 
+    static CString FindOtrQuery(const CString& sMessage) {
+        // Extract OTR query (e.g. ?OTR? or ?OTRv23?) from a message.
+        static const std::regex query{R"(\?OTR(\??v[a-z\d]*)?\?)"};
+        std::smatch m;
+        return std::regex_search(sMessage, m, query) ? m.str() : "";
+    }
+
     static void DefaultQueryWorkaround(CString& sMessage) {
         /* libotr replaces ?OTR? request by a string that contains html tags and
-         * newlines.
-         * The newlines confuse IRC server, and if we sent them in a separate
-         * PRIVMSG then
-         * they would show up regardless of other side's otr plugin presnece,
-         * defeating
-         * the purpose of the message. We replace that message here, keeping the
-         * OTR tag.
+         * newlines. The newlines confuse IRC server, and if we sent them in a
+         * separate PRIVMSG then they would show up regardless of other side's
+         * otr plugin presnece, defeating the purpose of the message. We replace
+         * that message here, keeping the OTR query.
          */
-        CString sPattern =
-            "?OTR*\n<b>*</b> has requested an "
-            "<a href=\"http://otr.cypherpunks.ca/\">Off-the-Record "
-            "private conversation</a>.  However, you do not have a plugin "
-            "to support that.\nSee <a href=\"http://otr.cypherpunks.ca/\">"
-            "http://otr.cypherpunks.ca/</a> for more information.";
-
-        if (!sMessage.WildCmp(sPattern)) {
-            return;
+        const CString& query = FindOtrQuery(sMessage);
+        if (!query.empty()) {
+            sMessage = query +
+                " Requesting an off-the-record private conversation."
+                " However, you do not have a plugin to support that."
+                " See https://otr.cypherpunks.ca/ for more information.";
         }
-
-        sMessage =
-            sMessage.FirstLine() +
-            " Requesting an off-the-record private "
-            "conversation. However, you do not have a plugin to support that. "
-            "See http://otr.cypherpunks.ca/ for more information.";
     }
 
     bool TargetIsChan(const CString& sTarget) {
