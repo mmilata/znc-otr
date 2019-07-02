@@ -39,9 +39,11 @@ GCRY_THREAD_OPTION_PTHREAD_IMPL;
 #include <cstring>
 #include <iostream>
 #include <list>
+#include <map>
 #include <regex>
 
 using std::list;
+using std::map;
 
 #define PROTOCOL_ID "irc"
 
@@ -91,6 +93,9 @@ class COtrMod : public CModule {
     VCString m_vsEnabled;
     VCString m_vsIgnored;
     COtrTimer* m_pOtrTimer;
+
+    // per-sender buffer of received partial OTR messages
+    map<CString, CString> m_MessageBuffer;
 
     // m_GenKeyRunning acts as a lock for members following it. We don't need
     // an actual lock because it is accessed only from the main thread.
@@ -816,6 +821,10 @@ class COtrMod : public CModule {
         return SendEncrypted(sTarget, sLine);
     }
 
+    static bool HasOtrMessageEnd(const CString& sMessage) {
+        return sMessage.EndsWith(".") || sMessage.EndsWith(",");
+    }
+
     EModRet OnPrivMsg(CNick& Nick, CString& sMessage) override {
         int res;
         char* newmessage = NULL;
@@ -825,6 +834,33 @@ class COtrMod : public CModule {
 
         if (IsIgnored(Nick.GetNick())) {
             return CONTINUE;
+        }
+
+        // When using an XMPP to IRC gateway such as bitlbee, a single OTR
+        // message can get broken into multiple parts due to IRC message length
+        // limit. Buffer such parts until a whole OTR message is received, and
+        // only then pass it to libotr.
+        if (sMessage.StartsWith("?OTR")) {
+            if (!HasOtrMessageEnd(sMessage) && FindOtrQuery(sMessage).empty()) {
+                // received beginning of an incomplete OTR message (not a query);
+                // buffer it (replacing any existing data) and wait for rest
+                m_MessageBuffer[sNick] = sMessage;
+                return HALT;
+            }
+        } else {
+            auto buffer = m_MessageBuffer.find(sNick);
+            if (buffer != m_MessageBuffer.end()) {
+                // received the next part of a buffered OTR message
+                if (!HasOtrMessageEnd(sMessage)) {
+                    // OTR message still incomplete, add new data to buffer
+                    buffer->second += sMessage;
+                    return HALT;
+                } else {
+                    // this part completes a buffered OTR message
+                    sMessage = buffer->second + sMessage;
+                    m_MessageBuffer.erase(buffer);
+                }
+            }
         }
 
         const char* accountname = GetUser()->GetUserName().c_str();
