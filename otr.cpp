@@ -39,8 +39,11 @@ GCRY_THREAD_OPTION_PTHREAD_IMPL;
 #include <cstring>
 #include <iostream>
 #include <list>
+#include <map>
+#include <regex>
 
 using std::list;
+using std::map;
 
 #define PROTOCOL_ID "irc"
 
@@ -90,6 +93,9 @@ class COtrMod : public CModule {
     VCString m_vsEnabled;
     VCString m_vsIgnored;
     COtrTimer* m_pOtrTimer;
+
+    // per-sender buffer of received partial OTR messages
+    map<CString, CString> m_MessageBuffer;
 
     // m_GenKeyRunning acts as a lock for members following it. We don't need
     // an actual lock because it is accessed only from the main thread.
@@ -725,32 +731,27 @@ class COtrMod : public CModule {
         if (m_pUserState) otrl_userstate_free(m_pUserState);
     }
 
+    static CString FindOtrQuery(const CString& sMessage) {
+        // Extract OTR query (e.g. ?OTR? or ?OTRv23?) from a message.
+        static const std::regex query{R"(\?OTR(\??v[a-z\d]*)?\?)"};
+        std::smatch m;
+        return std::regex_search(sMessage, m, query) ? m.str() : "";
+    }
+
     static void DefaultQueryWorkaround(CString& sMessage) {
         /* libotr replaces ?OTR? request by a string that contains html tags and
-         * newlines.
-         * The newlines confuse IRC server, and if we sent them in a separate
-         * PRIVMSG then
-         * they would show up regardless of other side's otr plugin presnece,
-         * defeating
-         * the purpose of the message. We replace that message here, keeping the
-         * OTR tag.
+         * newlines. The newlines confuse IRC server, and if we sent them in a
+         * separate PRIVMSG then they would show up regardless of other side's
+         * otr plugin presnece, defeating the purpose of the message. We replace
+         * that message here, keeping the OTR query.
          */
-        CString sPattern =
-            "?OTR*\n<b>*</b> has requested an "
-            "<a href=\"http://otr.cypherpunks.ca/\">Off-the-Record "
-            "private conversation</a>.  However, you do not have a plugin "
-            "to support that.\nSee <a href=\"http://otr.cypherpunks.ca/\">"
-            "http://otr.cypherpunks.ca/</a> for more information.";
-
-        if (!sMessage.WildCmp(sPattern)) {
-            return;
+        const CString& query = FindOtrQuery(sMessage);
+        if (!query.empty()) {
+            sMessage = query +
+                " Requesting an off-the-record private conversation."
+                " However, you do not have a plugin to support that."
+                " See https://otr.cypherpunks.ca/ for more information.";
         }
-
-        sMessage =
-            sMessage.FirstLine() +
-            " Requesting an off-the-record private "
-            "conversation. However, you do not have a plugin to support that. "
-            "See http://otr.cypherpunks.ca/ for more information.";
     }
 
     bool TargetIsChan(const CString& sTarget) {
@@ -820,6 +821,10 @@ class COtrMod : public CModule {
         return SendEncrypted(sTarget, sLine);
     }
 
+    static bool HasOtrMessageEnd(const CString& sMessage) {
+        return sMessage.EndsWith(".") || sMessage.EndsWith(",");
+    }
+
     EModRet OnPrivMsg(CNick& Nick, CString& sMessage) override {
         int res;
         char* newmessage = NULL;
@@ -829,6 +834,33 @@ class COtrMod : public CModule {
 
         if (IsIgnored(Nick.GetNick())) {
             return CONTINUE;
+        }
+
+        // When using an XMPP to IRC gateway such as bitlbee, a single OTR
+        // message can get broken into multiple parts due to IRC message length
+        // limit. Buffer such parts until a whole OTR message is received, and
+        // only then pass it to libotr.
+        if (sMessage.StartsWith("?OTR")) {
+            if (!HasOtrMessageEnd(sMessage) && FindOtrQuery(sMessage).empty()) {
+                // received beginning of an incomplete OTR message (not a query);
+                // buffer it (replacing any existing data) and wait for rest
+                m_MessageBuffer[sNick] = sMessage;
+                return HALT;
+            }
+        } else {
+            auto buffer = m_MessageBuffer.find(sNick);
+            if (buffer != m_MessageBuffer.end()) {
+                // received the next part of a buffered OTR message
+                if (!HasOtrMessageEnd(sMessage)) {
+                    // OTR message still incomplete, add new data to buffer
+                    buffer->second += sMessage;
+                    return HALT;
+                } else {
+                    // this part completes a buffered OTR message
+                    sMessage = buffer->second + sMessage;
+                    m_MessageBuffer.erase(buffer);
+                }
+            }
         }
 
         const char* accountname = GetUser()->GetUserName().c_str();
